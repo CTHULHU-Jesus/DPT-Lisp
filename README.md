@@ -1,4 +1,6 @@
 # DPT-Lisp
+
+[![CI](https://github.com/CTHULHU-Jesus/fiction/actions/workflows/blank.yml/badge.svg?branch=main)](https://github.com/CTHULHU-Jesus/fiction/actions/workflows/blank.yml)
 A dependently typed lisp
 
 # Purpose
@@ -28,8 +30,8 @@ The purpose of this project is to create a dependently typed lisp-like language.
 # Recorces
 
 - Parser
-  - [nom]
-  - [nom-locate]
+  - [nom](https://docs.rs/nom/latest/nom/) - A parsing combinator library.
+  - [nom-locate](https://docs.rs/nom_locate/latest/nom_locate/) - Allows for position tracking while parsing.
 - [Rust your own lisp](https://dev.to/deciduously/rust-your-own-lisp-50an)
   - [rustyline](https://github.com/kkawakam/rustyline) - a rust implimentation of readline.
   - Ast help
