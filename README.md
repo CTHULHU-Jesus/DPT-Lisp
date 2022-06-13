@@ -1,7 +1,10 @@
 # DPT-Lisp
 
-[![CI](https://github.com/CTHULHU-Jesus/fiction/actions/workflows/blank.yml/badge.svg?branch=main)](https://github.com/CTHULHU-Jesus/fiction/actions/workflows/blank.yml)
-A dependently typed lisp
+[![Build](https://github.com/CTHULHU-Jesus/DPT-Lisp/actions/workflows/build.yml/badge.svg)](https://github.com/CTHULHU-Jesus/DPT-Lisp/actions/workflows/build.yml)
+[![Build-Web](https://github.com/CTHULHU-Jesus/DPT-Lisp/actions/workflows/build-web.yml/badge.svg)](https://github.com/CTHULHU-Jesus/DPT-Lisp/actions/workflows/build-web.yml)
+[![Test](https://github.com/CTHULHU-Jesus/DPT-Lisp/actions/workflows/test.yml/badge.svg)](https://github.com/CTHULHU-Jesus/DPT-Lisp/actions/workflows/test.yml)
+
+a dependently typed lisp
 
 # Purpose
 
