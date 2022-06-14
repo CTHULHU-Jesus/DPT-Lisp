@@ -1,7 +1,8 @@
 // IMPORTS
 
 use super::{
-  find_builtin, ErrorKind, FileLocation, IResult, InputOrigin, Interpreter, MyError, Span, State,
+  find_builtin, Binding, ErrorKind, FileLocation, IResult, InputOrigin, Interpreter, MyError, Span,
+  State, TypeBinding,
 };
 use anyhow::{anyhow, Result};
 use lazy_static::lazy_static;
@@ -14,7 +15,7 @@ use nom::{
   InputIter,
 };
 use nom_locate::position;
-use std::{fmt::Display, i128, string, sync::Arc};
+use std::{collections::VecDeque, fmt::Display, i128, string, sync::Arc};
 
 // CONSTS
 /// List of characters that count as whitespace. Stolen from https://doc.rust-lang.org/reference/whitespace.html
@@ -26,14 +27,13 @@ lazy_static! {
     static ref RESTRICTED_CHARS: &'static str = __RESTRICTED_CHARS.as_str();
 }
 // TYPES
-
 #[derive(Clone, Debug)]
 /// Abstract syntax tree for language
 pub enum AST {
   /// Node to hold functions (bultins and lambdas)
   Fun(LFunction, FileLocation),
   /// Node to hold let expressions
-  Let(Vec<(String, AST)>, Box<AST>, FileLocation),
+  Let(Vec<Binding>, Box<AST>, FileLocation),
   /// Node to hold a s-expression
   Sexpr(Vec<AST>, FileLocation),
   /// Node to hold a variable
@@ -41,7 +41,7 @@ pub enum AST {
   /// Node to hold a value that needs no more evaluation
   Val(Value, FileLocation),
   /// Add a variable (with value ) to current scope
-  Define(String, Box<AST>, FileLocation),
+  Define(Binding, FileLocation),
   /// Set pre defined variable with a value
   Set(String, Box<AST>, FileLocation),
 }
@@ -61,9 +61,9 @@ pub enum LFunction {
   /// (name, function pointer)
   BuiltinM(String, LBuiltinM),
   /// lambda function (args, body), args are a list of variable names (types comeing soon //TODO)
-  LambdaF(Vec<String>, Box<AST>),
+  LambdaF(Vec<(String, TypeBinding)>, Box<AST>),
   /// lambda macro (args, body), args are a list of variable names (types comeing soon //TODO)
-  LambdaM(Vec<String>, Box<AST>),
+  LambdaM(Vec<(String, TypeBinding)>, Box<AST>),
 }
 
 #[derive(Clone, Debug)]
@@ -85,6 +85,8 @@ pub enum Value {
   /// A wraper for AST to eval,
   /// passed to macros
   Meval(Box<AST>, State),
+  /// A unit value
+  Unit,
 }
 
 // FUNCTIONS
@@ -163,11 +165,12 @@ fn all_expr(s: Span) -> IResult<AST> {
 
 /// Parse annonamas functions
 fn lambda(s: Span) -> IResult<AST> {
-  fn var(s: Span) -> IResult<String> {
+  fn var(s: Span) -> IResult<(String, TypeBinding)> {
     let (s, var) = many1(none_of(*RESTRICTED_CHARS))(s)?;
     let (s, _) = whitespace(s)?;
+    let (s, typ) = type_binding(s)?;
     let var: String = var.into_iter().collect();
-    return IResult::Ok((s, var));
+    return IResult::Ok((s, (var, typ)));
   }
   let (s, pos1) = position(s)?;
   let (s, _) = char('(')(s)?;
@@ -209,13 +212,14 @@ fn define(s: Span) -> IResult<AST> {
   let (s, _) = whitespace(s)?;
   let (s, var) = many1(none_of(*RESTRICTED_CHARS))(s)?;
   let (s, _) = whitespace(s)?;
+  let (s, typ) = opt(type_binding)(s)?;
   let (s, body) = all_expr(s)?;
   let (s, _) = char(')')(s)?;
   let (s, pos2) = position(s)?;
   let (s, _) = whitespace(s)?;
   let location = FileLocation::new(pos1, Some(pos2));
   let var: String = var.into_iter().collect();
-  return IResult::Ok((s, AST::Define(var, Box::new(body), location)));
+  return IResult::Ok((s, AST::Define((var, typ, Box::new(body)), location)));
 }
 
 /// Parse a set expression
@@ -238,17 +242,18 @@ fn set(s: Span) -> IResult<AST> {
 
 /// Parse a let-expression
 fn let_expr(s: Span) -> IResult<AST> {
-  fn binding(s: Span) -> IResult<(String, AST)> {
+  fn binding(s: Span) -> IResult<Binding> {
     let (s, _) = char('(')(s)?;
     let (s, _) = whitespace(s)?;
     let (s, var) = many1(none_of(*RESTRICTED_CHARS))(s)?;
     let (s, _) = whitespace(s)?;
+    let (s, typ) = opt(type_binding)(s)?;
     let (s, body) = all_expr(s)?;
     let (s, _) = whitespace(s)?;
     let (s, _) = char(')')(s)?;
     let (s, _) = whitespace(s)?;
     let var: String = var.into_iter().collect();
-    return IResult::Ok((s, (var, body)));
+    return IResult::Ok((s, (var, typ, Box::new(body))));
   }
   let (s, pos1) = position(s)?;
   let (s, _) = char('(')(s)?;
@@ -287,17 +292,14 @@ fn expr(s: Span) -> IResult<AST> {
 //   return IResult::Ok((s, AST::Var(var.iter().collect(), location)));
 // }
 
-/// Parse a variable or a builtin
+/// Parse a variable
 fn variable(s: Span) -> IResult<AST> {
   let (s, pos1) = position(s)?;
   let (s, var) = many1(none_of(*RESTRICTED_CHARS))(s)?;
   let (s, pos2) = position(s)?;
   let location = FileLocation::new(pos1, Some(pos2));
   let var: String = var.iter().collect();
-  let node = match find_builtin(var.clone()) {
-    Some(f) => AST::Fun(f, location),
-    None => AST::Var(var, location),
-  };
+  let node = AST::Var(var, location);
 
   return IResult::Ok((s, node));
 }
@@ -330,15 +332,12 @@ fn value(s: Span) -> IResult<AST> {
     let string: String = string.iter().collect();
     IResult::Ok((s, Value::Str(string)))
   }
-  // TODO Symbol
-  // fn symbol(s: Span) -> IResult<Value> {
-  //   let (s, _) = tag("'")(s)?;
-  //   let (s, sym) = many1(none_of("\t\r\n "))(s)?;
-  //   let sym: String = sym.iter().collect();
-  //   IResult::Ok((s, Value::Sym(sym)))
-  // }
+  fn unit(s: Span) -> IResult<Value> {
+    let (s, _) = tag("unit")(s)?;
+    return IResult::Ok((s, Value::Unit));
+  }
   let (s, pos1) = position(s)?;
-  let (s, value) = alt((boolean, integer, charector, my_string))(s)?;
+  let (s, value) = alt((unit, boolean, integer, charector, my_string))(s)?;
   let (s, pos2) = position(s)?;
   let location = FileLocation::new(pos1, Some(pos2));
   return IResult::Ok((s, AST::Val(value, location)));
@@ -353,6 +352,93 @@ fn comment(s: Span) -> IResult<()> {
     let (s, _) = newline(s)?;
     return IResult::Ok((s, ()));
   }
+}
+
+/// Parse a type binding
+/// e.x. [-> Int Int Int] for a function
+/// [Int] for an integer
+/// [-> *String String] any number of strings to one string
+pub fn type_binding(s: Span) -> IResult<TypeBinding> {
+  use TypeBinding::*;
+  fn any_type(s: Span) -> IResult<TypeBinding> {
+    // any type (Any)
+    fn any(s: Span) -> IResult<TypeBinding> {
+      let (s, _) = tag("Any")(s)?;
+      let (s, _) = whitespace(s)?;
+      return IResult::Ok((s, Any));
+    }
+    // Integer type (Int)
+    fn int(s: Span) -> IResult<TypeBinding> {
+      let (s, _) = tag("Int")(s)?;
+      let (s, _) = whitespace(s)?;
+      return IResult::Ok((s, Int));
+    }
+    // Boolean type (Bool)
+    fn boolean(s: Span) -> IResult<TypeBinding> {
+      let (s, _) = tag("Bool")(s)?;
+      let (s, _) = whitespace(s)?;
+      return IResult::Ok((s, Bool));
+    }
+    // Function/Macro type (args types,return type) (-> x x y)
+    fn arrow(s: Span) -> IResult<TypeBinding> {
+      let (s, _) = tag("->")(s)?;
+      let (s, _) = whitespace(s)?;
+      let (s, body) = many1(any_type)(s)?;
+      let mut body: VecDeque<TypeBinding> = body.into_iter().collect();
+      // last type is the return types
+      // can unwrap because I used many1 earlyer
+      let ret = body.pop_back().unwrap();
+      // all but the last type are args types
+      let args: Vec<_> = body.into_iter().collect();
+      return IResult::Ok((s, Arrow(args, Box::new(ret))));
+    }
+    // Star type (*x)
+    fn star(s: Span) -> IResult<TypeBinding> {
+      let (s, _) = tag("*")(s)?;
+      let (s, body) = any_type(s)?;
+      let (s, _) = whitespace(s)?;
+      return IResult::Ok((s, Star(Box::new(body))));
+    }
+    // Charector type (Char)
+    fn charector(s: Span) -> IResult<TypeBinding> {
+      let (s, _) = tag("Char")(s)?;
+      let (s, _) = whitespace(s)?;
+      return IResult::Ok((s, Char));
+    }
+    // The string type (Str)
+    fn string(s: Span) -> IResult<TypeBinding> {
+      let (s, _) = tag("Str")(s)?;
+      let (s, _) = whitespace(s)?;
+      return IResult::Ok((s, Char));
+    }
+    // type of Unit
+    fn unit(s: Span) -> IResult<TypeBinding> {
+      let (s, _) = tag("Unit")(s)?;
+      let (s, _) = whitespace(s)?;
+      return IResult::Ok((s, Char));
+    }
+    // parentheses around a type
+    fn parens(s: Span) -> IResult<TypeBinding> {
+      let (s, _) = tag("(")(s)?;
+      let (s, _) = whitespace(s)?;
+      let (s, body) = any_type(s)?;
+      let (s, _) = tag(")")(s)?;
+      let (s, _) = whitespace(s)?;
+      return IResult::Ok((s, Char));
+    }
+    // Do the parseing
+    return alt((
+      any, int, boolean, arrow, star, charector, string, unit, parens,
+    ))(s);
+  }
+
+  let (s, _) = tag("[")(s)?;
+  let (s, _) = whitespace(s)?;
+  let (s, binding) = any_type(s)?;
+  let (s, _) = tag("]")(s)?;
+  let (s, _) = whitespace(s)?;
+
+  return IResult::Ok((s, binding));
 }
 
 // TRAITS
@@ -414,8 +500,20 @@ impl Display for LFunction {
     match &self {
       BuiltinF(name, _) => write!(f, "{}", name),
       BuiltinM(name, _) => write!(f, "{}", name),
-      LambdaF(args, body) => write!(f, "(λ ({args:?}), {body})"),
-      LambdaM(args, body) => write!(f, "(mλ ({args:?}), {body})"),
+      LambdaF(args, body) => {
+        write!(f, "(λ (")?;
+        for (arg, typ) in args {
+          write!(f, "{arg} [{typ}] ")?;
+        }
+        write!(f, ") {body})")
+      }
+      LambdaM(args, body) => {
+        write!(f, "(mλ (")?;
+        for (arg, typ) in args {
+          write!(f, "{arg} [{typ}] ")?;
+        }
+        write!(f, ") {body})")
+      }
     }
   }
 }
@@ -438,6 +536,7 @@ impl Display for Value {
     match self {
       Pair(car, cdr) => write!(f, "(cons {car} {cdr})"),
       Fun(fun, _state) => write!(f, "{fun}"),
+      Unit => write!(f, "unit"),
       Char(c) => write!(f, "#'{c}"),
       Meval(body, _state) => write!(f, "`{body}`"),
       Bool(b) => {
@@ -466,12 +565,18 @@ impl Display for AST {
       AST::Var(a, _) => write!(f, "{a}"),
       AST::Val(a, _) => write!(f, "{a}"),
       AST::Fun(fun, _) => write!(f, "{fun}"),
-      AST::Define(var, def, _) => write!(f, "(define {var} {def})"),
+      AST::Define((var, typ, def), _) => match typ {
+        Some(typ) => write!(f, "(define {var} [{typ}] {def})"),
+        None => write!(f, "(define {var} {def})"),
+      },
       AST::Set(var, def, _) => write!(f, "(set {var} {def})"),
       AST::Let(bindings, body, _) => {
         write!(f, "(let (")?;
-        for (var, val) in bindings {
-          write!(f, "({var} {val})")?;
+        for (var, typ, val) in bindings {
+          match typ {
+            Some(typ) => write!(f, "({var} [{typ}] {val})")?,
+            None => write!(f, "({var} {val})")?,
+          };
         }
         write!(f, ") {body})")
       }
@@ -491,7 +596,7 @@ impl AST {
     use AST::*;
     match self {
       Set(_, _, l) => l.clone(),
-      Define(_, _, l) => l.clone(),
+      Define(_, l) => l.clone(),
       Var(_, l) => l.clone(),
       Fun(_, l) => l.clone(),
       Let(_, _, l) => l.clone(),

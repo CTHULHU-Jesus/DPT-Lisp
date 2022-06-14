@@ -1,7 +1,8 @@
 // IMPORTS
 #[path = "lib.rs"]
 mod lib;
-use lib::{file_to_span, repl_to_span, State};
+use lib::Context;
+use lib::{repl_to_span, State};
 use std::fs::{read_to_string, OpenOptions};
 use Box;
 
@@ -47,25 +48,20 @@ struct Args {
 /// main loop
 fn main() -> Result<()> {
   let args = Args::parse();
-  // turn files into spans
-  let mut spans = vec![];
-  for file in args.files {
-    let span = file_to_span(&file)?;
-    spans.push(span);
-  }
   // decide what to do with the files
-  let mut state = State::empty();
+  let mut state = State::default();
+  let mut context = Context::default();
   if args.parse_check {
-    let out = lib::parse_spans(&spans)?;
+    let out = lib::parse_files(&(args.files))?;
     for expr in out {
       println!("{expr}");
     }
     return Ok(());
   } else if args.type_check {
-    // lib::type_check_spans(&spans, lib::EMPTY_STATE)?;
+    lib::type_check_files(&(args.files), &mut context)?;
     return Ok(());
   } else {
-    let out = lib::run(&spans, &mut state)?;
+    let out = lib::run(&(args.files), &mut state)?;
     // println!("{out:#?}");
 
     if args.readline_mode {

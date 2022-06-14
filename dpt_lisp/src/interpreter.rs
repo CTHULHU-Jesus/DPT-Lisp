@@ -1,6 +1,5 @@
 // IMPORTS
-use super::{ErrorKind, MyError};
-use super::{FileLocation, LFunction, Parse::AST, Span, State, Value};
+use super::{Binding, ErrorKind, FileLocation, LFunction, MyError, Parse::AST, Span, State, Value};
 use anyhow::{anyhow, Result};
 use std::{error::Error, fmt::Display};
 
@@ -32,7 +31,7 @@ pub fn interperate(input: &AST, state: &mut State) -> Result<Value, MyError> {
       to_myerror(state.assign(var.to_string(), val.clone()), loc)?;
       Ok(val)
     }
-    Define(var, val, loc) => {
+    Define((var, _, val), loc) => {
       let val: Value = interperate(val, state)?;
       to_myerror(state.declare(var.to_string(), val.clone()), loc)?;
       Ok(val)
@@ -117,7 +116,7 @@ fn apply(
         );
       };
       let mut new_scope = state.new_scope();
-      for (var, val) in vars.into_iter().zip(args.into_iter()) {
+      for ((var, _typ), val) in vars.into_iter().zip(args.into_iter()) {
         to_myerror(new_scope.declare(var.to_string(), val.to_owned()), loc)?;
       }
       // evaluate body
@@ -127,8 +126,8 @@ fn apply(
 }
 
 /// add bindings to state
-fn add_bindings(bindings: &[(String, AST)], state: &mut State) -> Result<()> {
-  for (var, ast) in bindings {
+fn add_bindings(bindings: &[Binding], state: &mut State) -> Result<()> {
+  for (var, _typ, ast) in bindings {
     let val = interperate(ast, state)?;
     state.declare(var.to_string(), val)?;
   }

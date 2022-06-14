@@ -13,8 +13,8 @@ pub use Error::{ErrorKind, FileLocation, MyError};
 pub mod Builtin;
 pub use Builtin::find_builtin;
 
-// #[path = "type_check.rs"]
-// pub mod TypeCheck;
+#[path = "type_check.rs"]
+pub mod TypeCheck;
 
 #[path = "interpreter.rs"]
 pub(crate) mod Interpreter;
@@ -24,10 +24,46 @@ pub(crate) mod Interpreter;
 use anyhow::{anyhow, Result};
 use nom_locate::LocatedSpan;
 use std::collections::HashMap;
+use std::fmt::Display;
+use std::str::FromStr;
 use std::sync::{Arc, Mutex};
 
 // CONSTS
 // TYPES
+
+pub type Binding = (String, Option<TypeBinding>, Box<AST>);
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum TypeBinding {
+  /// Type representing an arbitrary number of arguments of some type
+  Star(Box<TypeBinding>),
+  /// Any type (use wisely)
+  Any,
+  /// Integer type
+  Int,
+  /// Boolean type (true,false)
+  Bool,
+  /// Function/Macro type (args types,return type)
+  Arrow(Vec<TypeBinding>, Box<TypeBinding>),
+  /// Charector type
+  Char,
+  /// The string type ("xxx")
+  Str,
+  /// type of Unit
+  Unit,
+  // TODO
+  // TypeVar(String)
+  // Pair(Box<TypeBinding>, Box<TypeBinding>),
+  // List(Box<TypeBinding>)
+}
+
+#[derive(Clone, Debug)]
+pub struct Context(Arc<Mutex<ContextInsides>>);
+
+#[derive(Clone, Debug)]
+struct ContextInsides {
+  type_map: HashMap<String, TypeBinding>,
+  up_scope: Option<Context>,
+}
 
 #[derive(Clone, Debug)]
 pub struct State(Arc<Mutex<StateInsides>>);
@@ -35,6 +71,7 @@ pub struct State(Arc<Mutex<StateInsides>>);
 #[derive(Clone, Debug)]
 struct StateInsides {
   map: HashMap<String, Value>,
+  // TODO: (needed for dependent types) type_map: HashMap<String, TypeBinding>,
   up_scope: Option<State>,
 }
 
@@ -53,18 +90,18 @@ pub fn repl_to_span<'a>(input: &'a str) -> Span<'a> {
   Span::new_extra(input.clone(), InputOrigin::Repl(Arc::new(input.to_owned())))
 }
 
-/// Turn file into span
-/// Todo: File currently lives forever, make it stop
-pub fn file_to_span(file_name: &str) -> Result<Span<'static>> {
-  use std::fs::read_to_string;
-  let text = read_to_string(file_name.clone())?;
-  let text: &'static str = Box::leak(Box::new(text));
-
-  Ok(Span::new_extra(
-    text,
-    InputOrigin::File(Arc::new(file_name.to_owned())),
-  ))
-}
+// /// Turn file into span
+// /// Todo: File currently lives forever, make it stop
+// pub fn file_to_span(file_name: &str) -> Result<Span<'static>> {
+//   use std::fs::read_to_string;
+//   let text = read_to_string(file_name.clone())?;
+//   let text: &'static str = Box::leak(Box::new(text));
+//
+//   Ok(Span::new_extra(
+//     text,
+//     InputOrigin::File(Arc::new(file_name.to_owned())),
+//   ))
+// }
 ///// Open the file on computer and read its contents into a span.
 //pub fn file_to_span<'a>(file: &mut std::fs::File, name: String) -> Result<Span<'a>> {
 //  let mut text: String = String::from("");
@@ -91,13 +128,16 @@ pub fn parse_expr(input: &Span) -> Result<AST> {
   iresult_to_result(Parse::parse1(input.to_owned()))
 }
 
-/// Parse a slice of spans.
-pub fn parse_spans(input: &[Span]) -> Result<Vec<AST>> {
+/// Parse a slice of files
+pub fn parse_files(input: &[String]) -> Result<Vec<AST>> {
+  use std::fs::read_to_string;
   let mut ast = Vec::new();
-  let mut i = 0;
-  while let Some(file) = input.get(i) {
-    i += 1;
-    let parsed = Parse::parse(file.to_owned());
+  for file in input {
+    // Open file and parse it
+    let text = read_to_string(file.clone())?;
+    let span = Span::new_extra(&text, InputOrigin::File(Arc::new(file.to_string())));
+
+    let parsed = Parse::parse(span);
     match parsed {
       std::result::Result::Ok((_s, mut out)) => ast.append(&mut out),
       Err(nom::Err::Error(e)) => return Err(anyhow!("{}", e.to_string())),
@@ -108,17 +148,25 @@ pub fn parse_spans(input: &[Span]) -> Result<Vec<AST>> {
   return Ok(ast);
 }
 
-// /// Type check a slice of Spans given a state.
-// pub fn type_check_spans(input: &[Span], state: &mut State) -> Result<AST> {
-//   let parsed = parse_spans(input)?;
-//   let checked = TypeCheck::check_types(&parsed, &state)?;
-//   return Ok(checked);
-// }
-//
-// /// run a slice of inputs through the parser, concatenate them and then type check and run the code.
-pub fn run(input: &[Span], state: &mut State) -> Result<Value> {
+/// Type check a list of files
+pub fn type_check_files(input: &[String], context: &mut Context) -> Result<()> {
+  let asts = parse_files(input)?;
+  for mut ast in asts {
+    TypeCheck::type_check(&mut ast, context)?;
+  }
+  return Ok(());
+}
+
+/// Type check one expression
+pub fn type_check1(input: &Span, context: &mut Context) -> Result<()> {
+  todo!()
+}
+
+/// run a slice of inputs through the parser, concatenate them and then type check and run the code.
+pub fn run(input: &[String], state: &mut State) -> Result<Value> {
   let mut ret = Value::Int(0);
-  let asts: Vec<AST> = parse_spans(input)?;
+  let asts: Vec<AST> = parse_files(input)?;
+  // @TODO: type check asts
   for ast in asts {
     ret = Interpreter::interperate(&ast, state)?;
   }
@@ -154,13 +202,90 @@ impl InputOrigin {
   }
 }
 
+impl Context {
+  /// create a new scope with a reference to an uper scope, if one exists.
+  fn new(up_scope: Option<Self>) -> Self {
+    Context(Arc::new(Mutex::new(ContextInsides::new(up_scope))))
+  }
+  /// create a new scope with |self| as the parent scope
+  pub fn new_scope(&self) -> Self {
+    Self::new(Some(self.clone()))
+  }
+
+  /// Declare a new variable in scope
+  /// Errors if variable already exists
+  pub fn declare(&mut self, var: String, typ: TypeBinding) -> Result<()> {
+    let Context(ref mut insides) = self;
+    // TODO find a way around unwrap
+    insides.lock().unwrap().declare(var, typ)
+  }
+
+  /// Look up the type of a variable
+  pub fn lookup(&self, var: String) -> Option<TypeBinding> {
+    let Context(ref insides) = self;
+    // TODO find a way around unwrap
+    insides.lock().unwrap().lookup(var)
+  }
+}
+
+impl Default for Context {
+  fn default() -> Self {
+    Context(Arc::new(Mutex::new(ContextInsides::default())))
+  }
+}
+
+impl ContextInsides {
+  /// create a new scope with a reference to an uper scope, if one exists.
+  pub fn new(up_scope: Option<Context>) -> Self {
+    Self {
+      type_map: HashMap::new(),
+      up_scope: up_scope,
+    }
+  }
+  /// Declare a new variable in scope
+  /// Errors if variable already exists
+  pub fn declare(&mut self, var: String, typ: TypeBinding) -> Result<()> {
+    match self.type_map.get(&var) {
+      Some(_) => Err(anyhow!(
+					"Variable \"{var}\" already declared in current scope, if you want to change the value in \"{var}\" use set."
+      )),
+      None => {
+        self.type_map.insert(var, typ);
+        Ok(())
+      }
+    }
+  }
+
+  /// Find the type for a variable in scope
+  pub fn lookup(&self, var: String) -> Option<TypeBinding> {
+    match self.type_map.get(&var) {
+      // return value in current scope
+      Some(x) => Some(x.to_owned()),
+      // return value in higher scope
+      None => match &self.up_scope {
+        Some(scope) => scope.lookup(var),
+        None => None,
+      },
+    }
+  }
+}
+
+impl Default for ContextInsides {
+  fn default() -> Self {
+    Self {
+      type_map: Builtin::inital_context(),
+      up_scope: None,
+    }
+  }
+}
+
 impl State {
-  /// create an empty state
+  /// An empty state with nothing in it
   pub fn empty() -> Self {
-    Self::new(None)
+    State(Arc::new(Mutex::new(StateInsides::new(None))))
   }
   /// create a new scope with a reference to an uper scope, if one exists.
-  pub fn new(up_scope: Option<Self>) -> Self {
+  fn new(up_scope: Option<Self>) -> Self {
     State(Arc::new(Mutex::new(StateInsides::new(up_scope))))
   }
   /// create a new scope with |self| as the parent scope
@@ -187,6 +312,12 @@ impl State {
     let State(ref insides) = self;
     // TODO find a way around unwrap
     insides.lock().unwrap().lookup(var)
+  }
+}
+
+impl Default for State {
+  fn default() -> Self {
+    State(Arc::new(Mutex::new(StateInsides::default())))
   }
 }
 
@@ -240,6 +371,84 @@ impl StateInsides {
     }
   }
 }
+impl Default for StateInsides {
+  fn default() -> Self {
+    StateInsides {
+      map: Builtin::inital_state(),
+      up_scope: None,
+    }
+  }
+}
+
+impl TypeBinding {
+  /// Returns true if one type can be coerced to the other
+  /// When used in an assignment use this funtion like this:
+  /// user_defined_type.same_as(other_type)
+  pub fn same_as(&self, other: Self, context: &Context) -> bool {
+    const any: TypeBinding = TypeBinding::Any;
+
+    if self == &any || self == &other {
+      true
+    } else {
+      match self {
+        TypeBinding::Arrow(a_args, a_ret) => match other {
+          TypeBinding::Arrow(b_args, b_ret) => {
+            if a_args.len() != b_args.len() {
+              false
+            } else {
+              let mut acc = true;
+              for (a_arg, b_arg) in a_args.into_iter().zip(b_args.into_iter()) {
+                acc = acc && a_arg.same_as(b_arg, context);
+              }
+              acc && a_ret.same_as(*b_ret, context)
+            }
+          }
+          _ => false,
+        },
+        _ => false,
+      }
+    }
+  }
+}
+
+impl Display for TypeBinding {
+  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    use TypeBinding::*;
+    match self {
+      Any => write!(f, "Any"),
+      Int => write!(f, "Int"),
+      Bool => write!(f, "Bool"),
+      Char => write!(f, "Char"),
+      Str => write!(f, "Str"),
+      Unit => write!(f, "Unit"),
+      Star(body) => write!(f, "*{body}"),
+      Arrow(body, ret) => {
+        write!(f, "(-> ")?;
+        for arg in body {
+          write!(f, "{arg} ")?;
+        }
+        write!(f, "{ret})")
+      }
+    }
+  }
+}
+
+impl FromStr for TypeBinding {
+  type Err = anyhow::Error;
+
+  /// Parse a type
+  fn from_str(s: &str) -> Result<Self, Self::Err> {
+    // wrap the type with the requierd brackets
+    let wraped = format!("[{s}]");
+
+    let span = Span::new_extra(&wraped, InputOrigin::Repl(Arc::new(wraped.clone())));
+
+    iresult_to_result(Parse::type_binding(span))
+  }
+}
+
+unsafe impl Send for ContextInsides {}
+unsafe impl Send for Context {}
 
 unsafe impl Send for StateInsides {}
 unsafe impl Send for State {}

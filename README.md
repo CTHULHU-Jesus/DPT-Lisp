@@ -9,7 +9,13 @@ a dependently typed lisp
 # Purpose
 
 
-The purpose of this project is to create a dependently typed lisp-like language. This is ment to be an inplimentation of the work for my masters thesis. There will also be a web version where people can interact with the interpreter.
+The purpose of this project is to create a dependently typed lisp-like language. This is ment to be an inplimentation of the work for my masters thesis. There will also be a web version where people can interact with the interpreter. 
+
+# Specification
+
+**TODO** 
+
+A scheme like language with types. 
 
 # Bugs
 
@@ -18,8 +24,15 @@ The purpose of this project is to create a dependently typed lisp-like language.
 # Missing Features
 
 - types
+  - let polymorphism
+  - Sum types and structs (Pair is a product type)
+  - dependent types
 - ports 
 - standard library
+- Implement a linear algebra library using
+  - dependent types
+  - C-calling
+	- LAPACK/BLAS 
 - website
 
 # Completed features Features

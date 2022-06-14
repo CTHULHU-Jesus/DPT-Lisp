@@ -5,12 +5,12 @@ use super::{
   Interpreter::{interperate, to_myerror, RuntimeError},
   LBuiltinF, LFunction, MyError,
   Parse::LBuiltinM,
-  State, Value, AST,
+  State, TypeBinding, Value, AST,
 };
 use anyhow::{anyhow, Result};
 use lazy_static::lazy_static;
-use std::collections::HashMap;
 use std::ops::Add;
+use std::{collections::HashMap, str::FromStr};
 // CONSTS
 lazy_static! {
   static ref FUNCTION_MAP: HashMap<String, LBuiltinF> = {
@@ -33,11 +33,83 @@ lazy_static! {
     m.insert("if".to_owned(), b_if);
     m
   };
+  static ref TYPE_MAP: HashMap<String, TypeBinding> = {
+    let mut m: HashMap<String, TypeBinding> = HashMap::new();
+    m.insert(
+      "+".to_owned(),
+      TypeBinding::from_str("-> *Int Int").unwrap(),
+    );
+    m.insert(
+      "-".to_owned(),
+      TypeBinding::from_str("-> *Int Int").unwrap(),
+    );
+    m.insert(
+      "*".to_owned(),
+      TypeBinding::from_str("-> *Int Int").unwrap(),
+    );
+    m.insert(
+      "/".to_owned(),
+      TypeBinding::from_str("-> *Int Int").unwrap(),
+    );
+    m.insert(
+      "println".to_owned(),
+      TypeBinding::from_str("-> *Any Unit").unwrap(),
+    );
+    m.insert(
+      "print".to_owned(),
+      TypeBinding::from_str("-> *Any Unit").unwrap(),
+    );
+    m.insert(
+      "xor".to_owned(),
+      TypeBinding::from_str("-> *Any Unit").unwrap(),
+    );
+
+    m.insert(
+      "print-ast".to_owned(),
+      TypeBinding::from_str("-> *Any Unit").unwrap(),
+    );
+    m.insert(
+      "or".to_owned(),
+      TypeBinding::from_str("-> *Bool Bool").unwrap(),
+    );
+    m.insert(
+      "and".to_owned(),
+      TypeBinding::from_str("-> *Bool Bool").unwrap(),
+    );
+    m.insert(
+      "if".to_owned(),
+      TypeBinding::from_str("-> Bool Any Any Any").unwrap(),
+    );
+
+    m
+  };
 }
 
 // TYPES
 
 // FUNCTIONS
+/// Inital state with all of the builtins
+pub fn inital_state() -> HashMap<String, Value> {
+  let mut state = HashMap::new();
+  for (name, f) in &*FUNCTION_MAP {
+    state.insert(
+      name.clone(),
+      Value::Fun(LFunction::BuiltinF(name.clone(), *f), State::empty()),
+    );
+  }
+  for (name, f) in &*MACRO_MAP {
+    state.insert(
+      name.clone(),
+      Value::Fun(LFunction::BuiltinM(name.clone(), *f), State::empty()),
+    );
+  }
+  state
+}
+/// Inital context with all of the builtins and there types
+pub fn inital_context() -> HashMap<String, TypeBinding> {
+  return (*TYPE_MAP).clone();
+}
+
 pub fn find_builtin(name: String) -> Option<LFunction> {
   let mut name = name.clone();
   match (*FUNCTION_MAP).get(&mut name) {
