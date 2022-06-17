@@ -37,7 +37,10 @@ pub fn type_check(input: &mut AST, context: &mut Context) -> Result<TypeBinding,
     AST::Let(ref mut bindings, ref mut body, _loc) => {
       let mut new_context = context.new_scope();
       apply_bindings(bindings, &mut new_context)?;
-      type_check(body, &mut new_context)
+      // the let expression returns the last thing in the body
+      body.iter_mut().try_fold(TypeBinding::Unit, |_, ast| {
+        type_check(ast, &mut new_context)
+      })
     }
     AST::Define(ref mut binding, _loc) => {
       apply_binding(binding, context)?;
@@ -151,7 +154,9 @@ fn type_of_function(f: &mut LFunction, context: &mut Context) -> Result<TypeBind
         new_context.declare(name.to_string(), typ.to_owned())?;
       }
       // get the return type of the function
-      let ret: TypeBinding = type_check(&mut *body, &mut new_context)?;
+      let ret: TypeBinding = body.iter_mut().try_fold(TypeBinding::Unit, |_, ast| {
+        type_check(&mut *ast, &mut new_context)
+      })?;
       Ok(TypeBinding::Arrow(types, Box::new(ret)))
     }
   }
@@ -185,3 +190,48 @@ impl TypeError {
 }
 
 // TESTS
+#[cfg(test)]
+mod test {
+  #[test]
+  fn test_function_application() {
+    use super::{function_application_check, Context, TypeBinding::*};
+    // test1
+    let test1 = vec![Int, Int, Str, Star(Box::new(Bool))];
+    // test1.1
+    assert!(function_application_check(
+      test1.clone(),
+      vec![Int, Int, Str],
+      &mut Context::default()
+    )
+    .is_ok());
+    // test1.2
+    assert!(function_application_check(
+      test1.clone(),
+      vec![Int, Int, Str, Bool],
+      &mut Context::default()
+    )
+    .is_ok());
+    // test1.3
+    assert!(function_application_check(
+      test1.clone(),
+      vec![Int, Int, Str, Bool, Bool, Bool],
+      &mut Context::default()
+    )
+    .is_ok());
+    assert!(function_application_check(
+      test1.clone(),
+      vec![Int, Int, Str, Bool],
+      &mut Context::default()
+    )
+    .is_ok());
+    // test 2
+    let test2 = vec![Star(Box::new(Str)), Char];
+    // test 2.1
+    assert!(
+      function_application_check(test2.clone(), vec![Str, Char], &mut Context::default()).is_err()
+    );
+    assert!(
+      function_application_check(test2.clone(), vec![Char, Int], &mut Context::default()).is_err()
+    );
+  }
+}

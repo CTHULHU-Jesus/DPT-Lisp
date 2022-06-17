@@ -33,7 +33,7 @@ pub enum AST {
   /// Node to hold functions (bultins and lambdas)
   Fun(LFunction, FileLocation),
   /// Node to hold let expressions
-  Let(Vec<Binding>, Box<AST>, FileLocation),
+  Let(Vec<Binding>, Vec<AST>, FileLocation),
   /// Node to hold a s-expression
   Sexpr(Vec<AST>, FileLocation),
   /// Node to hold a variable
@@ -61,9 +61,9 @@ pub enum LFunction {
   /// (name, function pointer)
   BuiltinM(String, LBuiltinM),
   /// lambda function (args, body), args are a list of variable names (types comeing soon //TODO)
-  LambdaF(Vec<(String, TypeBinding)>, Box<AST>),
+  LambdaF(Vec<(String, TypeBinding)>, Vec<AST>),
   /// lambda macro (args, body), args are a list of variable names (types comeing soon //TODO)
-  LambdaM(Vec<(String, TypeBinding)>, Box<AST>),
+  LambdaM(Vec<(String, TypeBinding)>, Vec<AST>),
 }
 
 #[derive(Clone, Debug)]
@@ -183,23 +183,17 @@ fn lambda(s: Span) -> IResult<AST> {
   let (s, _) = whitespace(s)?;
   let (s, _) = char(')')(s)?;
   let (s, _) = whitespace(s)?;
-  let (s, body) = all_expr(s)?;
+  let (s, body) = many1(all_expr)(s)?;
   let (s, _) = char(')')(s)?;
   let (s, pos2) = position(s)?;
   let (s, _) = whitespace(s)?;
   let location = FileLocation::new(pos1, Some(pos2));
   // If function
   if vec!["λ", "lambda"].contains(&kind) {
-    return IResult::Ok((
-      s,
-      AST::Fun(LFunction::LambdaF(args, Box::new(body)), location),
-    ));
+    return IResult::Ok((s, AST::Fun(LFunction::LambdaF(args, body), location)));
   } else {
     // If macro
-    return IResult::Ok((
-      s,
-      AST::Fun(LFunction::LambdaM(args, Box::new(body)), location),
-    ));
+    return IResult::Ok((s, AST::Fun(LFunction::LambdaM(args, body), location)));
   }
 }
 
@@ -263,12 +257,12 @@ fn let_expr(s: Span) -> IResult<AST> {
   let (s, _) = char('(')(s)?;
   let (s, bindings) = many0(binding)(s)?;
   let (s, _) = char(')')(s)?;
-  let (s, body) = all_expr(s)?;
+  let (s, body) = many1(all_expr)(s)?;
   let (s, _) = char(')')(s)?;
   let (s, pos2) = position(s)?;
   let (s, _) = whitespace(s)?;
   let location = FileLocation::new(pos1, Some(pos2));
-  return IResult::Ok((s, AST::Let(bindings, Box::new(body), location)));
+  return IResult::Ok((s, AST::Let(bindings, body, location)));
 }
 
 /// Parse an s-expression
@@ -381,22 +375,52 @@ pub fn type_binding(s: Span) -> IResult<TypeBinding> {
     }
     // Function/Macro type (args types,return type) (-> x x y)
     fn arrow(s: Span) -> IResult<TypeBinding> {
+      /// Checks that, if there is a * type, it is at the end.
+      fn check_star(args: &[TypeBinding]) -> bool {
+        for (num, arg) in args.into_iter().enumerate() {
+          if arg.is_star() && (num + 1) != args.len() {
+            return false;
+          }
+        }
+        return true;
+      }
+      let (s, pos1) = position(s)?;
       let (s, _) = tag("->")(s)?;
       let (s, _) = whitespace(s)?;
       let (s, body) = many1(any_type)(s)?;
+      let (s, pos2) = position(s)?;
       let mut body: VecDeque<TypeBinding> = body.into_iter().collect();
       // last type is the return types
       // can unwrap because I used many1 earlyer
       let ret = body.pop_back().unwrap();
       // all but the last type are args types
       let args: Vec<_> = body.into_iter().collect();
+      // check that, if there is a star type it is last
+      // also no returning star types
+      if check_star(&args) == false || ret.is_star() {
+        return IResult::Err(nom::Err::Failure(MyError::new_from_span(
+          ErrorKind::Parse,
+          pos1,
+          Some(pos2),
+        )));
+      }
       return IResult::Ok((s, Arrow(args, Box::new(ret))));
     }
     // Star type (*x)
     fn star(s: Span) -> IResult<TypeBinding> {
+      let (s, pos1) = position(s)?;
       let (s, _) = tag("*")(s)?;
       let (s, body) = any_type(s)?;
+      let (s, pos2) = position(s)?;
       let (s, _) = whitespace(s)?;
+      // Check that the body is not a star type
+      if body.is_star() {
+        return IResult::Err(nom::Err::Failure(MyError::new_from_span(
+          ErrorKind::Parse,
+          pos1,
+          Some(pos2),
+        )));
+      }
       return IResult::Ok((s, Star(Box::new(body))));
     }
     // Charector type (Char)
@@ -409,13 +433,13 @@ pub fn type_binding(s: Span) -> IResult<TypeBinding> {
     fn string(s: Span) -> IResult<TypeBinding> {
       let (s, _) = tag("Str")(s)?;
       let (s, _) = whitespace(s)?;
-      return IResult::Ok((s, Char));
+      return IResult::Ok((s, Str));
     }
     // type of Unit
     fn unit(s: Span) -> IResult<TypeBinding> {
       let (s, _) = tag("Unit")(s)?;
       let (s, _) = whitespace(s)?;
-      return IResult::Ok((s, Char));
+      return IResult::Ok((s, Unit));
     }
     // parentheses around a type
     fn parens(s: Span) -> IResult<TypeBinding> {
@@ -505,14 +529,22 @@ impl Display for LFunction {
         for (arg, typ) in args {
           write!(f, "{arg} [{typ}] ")?;
         }
-        write!(f, ") {body})")
+        write!(f, ")")?;
+        for expr in body {
+          write!(f, "{expr} ")?;
+        }
+        write!(f, ")")
       }
       LambdaM(args, body) => {
         write!(f, "(mλ (")?;
         for (arg, typ) in args {
           write!(f, "{arg} [{typ}] ")?;
         }
-        write!(f, ") {body})")
+        write!(f, ")")?;
+        for expr in body {
+          write!(f, "{expr} ")?;
+        }
+        write!(f, ")")
       }
     }
   }
@@ -578,7 +610,11 @@ impl Display for AST {
             None => write!(f, "({var} {val})")?,
           };
         }
-        write!(f, ") {body})")
+        write!(f, ") ")?;
+        for expr in body {
+          write!(f, "{expr} ")?;
+        }
+        write!(f, ") ")
       }
       AST::Sexpr(xs, _) => {
         write!(f, "(")?;

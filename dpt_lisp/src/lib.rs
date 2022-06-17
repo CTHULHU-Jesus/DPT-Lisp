@@ -381,6 +381,14 @@ impl Default for StateInsides {
 }
 
 impl TypeBinding {
+  /// Returns true if the type is a star type (e.x. *Int)
+  pub fn is_star(&self) -> bool {
+    match self {
+      TypeBinding::Star(_) => true,
+      _ => false,
+    }
+  }
+
   /// Returns true if one type can be coerced to the other
   /// When used in an assignment use this funtion like this:
   /// user_defined_type.same_as(other_type)
@@ -454,3 +462,152 @@ unsafe impl Send for StateInsides {}
 unsafe impl Send for State {}
 
 // TESTS
+
+/// Test the TypeBinding methods and implimentation
+#[cfg(test)]
+mod test_types {
+  use super::*;
+
+  /// Test the same_as method.
+  /// Notes:
+  /// 1. All types can bind to any, but any can't bind to any type but any.
+  ///    (e.x. Any.same_as(Bool) good, Bool.same_as(Any) bad)
+  #[test]
+  fn same_as() {
+    // TODO
+  }
+
+  /// Test the FromStr parseing
+  /// Notes:
+  /// 1. You should not be able to "Star" more than once (e.x. "*Int" works, "**Int" does not).
+  /// 2. Star types should only come at the end of functions (e.x. "-> Int *Int Int" good, "-> *Int Int Int" bad)
+  #[test]
+  fn parseing() {
+    // Test Any
+    let any_p = TypeBinding::from_str("Any");
+    let any = TypeBinding::Any;
+    assert!(any_p.is_ok());
+    assert_eq!(any_p.unwrap(), any);
+
+    // Test Int
+    let int_p = TypeBinding::from_str("Int");
+    let int = TypeBinding::Int;
+    assert!(int_p.is_ok());
+    assert_eq!(int_p.unwrap(), int);
+
+    // Test Bool
+    let boolean_p = TypeBinding::from_str("Bool");
+    let boolean = TypeBinding::Bool;
+    assert!(boolean_p.is_ok());
+    assert_eq!(boolean_p.unwrap(), boolean);
+
+    // Test Char
+    let charector_p = TypeBinding::from_str("Char");
+    let charector = TypeBinding::Char;
+    assert!(charector_p.is_ok());
+    assert_eq!(charector_p.unwrap(), charector);
+
+    // Test Str
+    let stri_p = TypeBinding::from_str("Str");
+    let stri = TypeBinding::Str;
+    assert!(stri_p.is_ok());
+    assert_eq!(stri_p.unwrap(), stri);
+
+    // Test Unit
+    let unit_p = TypeBinding::from_str("Unit");
+    let unit = TypeBinding::Unit;
+    assert!(unit_p.is_ok());
+    assert_eq!(unit_p.unwrap(), unit);
+
+    // Test Star
+    let int_star_p = TypeBinding::from_str("*Int");
+    let int_star = TypeBinding::Star(Box::new(TypeBinding::Int));
+    assert!(int_star_p.is_ok());
+    assert_eq!(int_star_p.unwrap(), int_star);
+    assert!(TypeBinding::from_str("**Int").is_err());
+
+    // Test Arrow
+    let arrow_p = TypeBinding::from_str("-> Any *Char Int");
+    let arrow = TypeBinding::Arrow(
+      vec![
+        TypeBinding::Any,
+        TypeBinding::Star(Box::new(TypeBinding::Char)),
+      ],
+      Box::new(TypeBinding::Int),
+    );
+    assert!(arrow_p.is_ok());
+    assert_eq!(arrow_p.unwrap(), arrow);
+
+    assert!(TypeBinding::from_str("-> Any* Char Int").is_err());
+    assert!(TypeBinding::from_str("-> Any Char Int*").is_err());
+  }
+}
+
+/// Test the methods of context.
+#[cfg(test)]
+mod test_context {
+  use super::*;
+  /// Tests the declare and lookup methods.
+  #[test]
+  fn declare_lookup() {
+    let mut c = Context::default().new_scope();
+    // TODO: use a random type ~100 times
+    let typ = TypeBinding::Bool;
+    // TODO: use a random string
+    let var = "x".to_owned();
+    // declareing "x" should work on an empty scope
+    assert!(c.declare(var.clone(), typ.clone()).is_ok());
+    // redeclareing "x" should work not on this scope
+    assert!(c.declare(var.clone(), typ.clone()).is_err());
+    // Lookup should be able to find the value
+    assert!(c.lookup(var.clone()).is_some());
+    // Looking up "x" should give the same type stored.
+    assert_eq!(c.lookup(var).unwrap(), typ);
+  }
+
+  /// This function tests these properties of the scopeing rules of a context
+  /// 1. If something exists in an outer scope, then it exists in an inner scope (with the exeption of shadowing).
+  /// 2. If something is declared in an inner scope, then it does not exist in the outer scope.
+  /// 3. (shadowing) If something is declared in an inner scope that has the same name as
+  ///    something in the outter scope, then when useing that name in the inner scope it
+  ///    reffers to the thing in the inner scope and the outer scope remains unchanged.
+  #[test]
+  fn scope_rules() {
+    let mut c = Context::default().new_scope();
+    c.declare("x".to_owned(), TypeBinding::Any);
+    /// Test the first property.
+    fn test_1(outer_scope: &Context) {
+      let inner_scope = outer_scope.new_scope();
+      assert!(inner_scope.lookup("x".to_owned()).is_some());
+    }
+    /// Test the second property.
+    fn test_2(outer_scope: &Context) {
+      let mut inner_scope = outer_scope.new_scope();
+      assert!(inner_scope
+        .declare("y".to_owned(), TypeBinding::Any)
+        .is_ok());
+      assert!(outer_scope.lookup("y".to_owned()).is_none());
+    }
+    /// Test the third property.
+    fn test_3(outer_scope: &Context) {
+      let mut inner_scope = outer_scope.new_scope();
+      assert!(inner_scope
+        .declare("x".to_owned(), TypeBinding::Int)
+        .is_ok());
+      assert_ne!(
+        outer_scope.lookup("x".to_owned()).unwrap(),
+        inner_scope.lookup("x".to_owned()).unwrap()
+      );
+    }
+
+    test_1(&c);
+    test_2(&c);
+    test_3(&c);
+  }
+}
+
+/// Test the methods of state.
+#[cfg(test)]
+mod test_state {
+  use super::*;
+}

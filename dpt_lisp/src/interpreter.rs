@@ -40,7 +40,9 @@ pub fn interperate(input: &AST, state: &mut State) -> Result<Value, MyError> {
     Let(bindings, body, loc) => {
       let mut new_state = state.new_scope();
       to_myerror(add_bindings(bindings, &mut new_state), &loc)?;
-      interperate(body, &mut new_state)
+      body
+        .iter()
+        .try_fold(Value::Unit, |_, ast| interperate(ast, &mut new_state))
     }
     Sexpr(exprs, loc) => eval(exprs, state, &loc),
     Var(x, l) => match state.lookup(x.to_string()) {
@@ -120,7 +122,9 @@ fn apply(
         to_myerror(new_scope.declare(var.to_string(), val.to_owned()), loc)?;
       }
       // evaluate body
-      interperate(body, &mut new_scope)
+      body
+        .into_iter()
+        .try_fold(Value::Unit, |_, ast| interperate(ast, &mut new_scope))
     }
   }
 }
