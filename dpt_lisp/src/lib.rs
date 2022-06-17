@@ -163,18 +163,22 @@ pub fn type_check1(input: &Span, context: &mut Context) -> Result<()> {
 }
 
 /// run a slice of inputs through the parser, concatenate them and then type check and run the code.
-pub fn run(input: &[String], state: &mut State) -> Result<Value> {
-  let mut ret = Value::Int(0);
-  let asts: Vec<AST> = parse_files(input)?;
+pub fn run(input: &[String], state: &mut State, context: &mut Context) -> Result<Value> {
+  let mut ret = Value::Unit;
+  let mut asts: Vec<AST> = parse_files(input)?;
   // @TODO: type check asts
+  for mut ast in asts.iter_mut() {
+    TypeCheck::type_check(&mut ast, context)?;
+  }
   for ast in asts {
     ret = Interpreter::interperate(&ast, state)?;
   }
   return Ok(ret);
 }
 
-pub fn run1(input: &Span, state: &mut State) -> Result<Value> {
-  let parsed = parse_expr(input)?;
+pub fn run1(input: &Span, state: &mut State, context: &mut Context) -> Result<Value> {
+  let mut parsed = parse_expr(input)?;
+  TypeCheck::type_check(&mut parsed, context)?;
   Ok(Interpreter::interperate(&parsed, state)?)
 }
 
@@ -413,6 +417,7 @@ impl TypeBinding {
           }
           _ => false,
         },
+        TypeBinding::Star(a) => a.same_as(other, context),
         _ => false,
       }
     }

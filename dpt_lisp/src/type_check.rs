@@ -71,7 +71,7 @@ pub fn type_check(input: &mut AST, context: &mut Context) -> Result<TypeBinding,
             .iter_mut()
             .map(|ast: &mut AST| type_check(ast, context))
             .collect::<Result<Vec<TypeBinding>, MyError>>()?;
-          function_application_check(a_args, b_args, context).map_err(|e| e.into_myerror(loc))?;
+          function_application_check(&a_args, &b_args, context).map_err(|e| e.into_myerror(loc))?;
           Ok(*a_ret.clone())
         }
         x => return Err(TypeError::CallOfNonFunc(x).into_myerror(loc)),
@@ -85,11 +85,50 @@ pub fn type_check(input: &mut AST, context: &mut Context) -> Result<TypeBinding,
 /// |a_args|: the arguments the function needs to be applied
 /// |b_args|: the arguments trying to be applied to the function
 fn function_application_check(
-  a_args: Vec<TypeBinding>,
-  b_args: Vec<TypeBinding>,
+  a_args: &[TypeBinding],
+  b_args: &[TypeBinding],
   context: &mut Context,
 ) -> Result<(), TypeError> {
-  todo!()
+  // Pop types off of a_args and b_args.
+  // Unless the current a type is a star type,
+  // then just pop b_args untill empty.
+  // If there is a star type, it must be in
+  // a_args and at the end.
+  let mut a_args: Vec<TypeBinding> = a_args.iter().cloned().collect::<Vec<_>>();
+  let mut b_args: Vec<TypeBinding> = b_args.iter().cloned().collect();
+  // reverse because Vec's pop from the back.
+  a_args.reverse();
+  b_args.reverse();
+  let mut a: Option<TypeBinding> = None;
+  while b_args.is_empty() == false {
+    a = match &a {
+      Some(x) if x.is_star() => a,
+      _ => Some(a_args.pop().ok_or_else(|| {
+        // println!("too many args");
+        anyhow!("too many arguments applied to function.").into()
+      })?),
+    };
+    // star check for a
+    if a.as_ref().unwrap().is_star() && a_args.len() != 0 {
+      // println!("wrong star placement");
+
+      return Err(anyhow!("Star types must come at the end of arguments.").into());
+    }
+
+    // b_args is verrified not to be empty
+    let b = b_args.pop().unwrap();
+    // verrify that b can be coerced to a.
+    println!("a:{a:?}, b:{b}");
+    if !a.as_ref().unwrap().same_as(b.clone(), context) {
+      // println!("bad types");
+      return Err(anyhow!("{} could not be coerced to {b}", a.unwrap()).into());
+    }
+  }
+  // If a_args has more elemets, it should only be one Star type
+  if (a_args.len() == 1 && !a_args[0].is_star()) || a_args.len() > 1 {
+    return Err(anyhow!("Applied wrong number of args").into());
+  }
+  Ok(())
 }
 
 /// apply one binding, and set the type of the binding to Some(_) if it was None.
@@ -199,39 +238,35 @@ mod test {
     let test1 = vec![Int, Int, Str, Star(Box::new(Bool))];
     // test1.1
     assert!(function_application_check(
-      test1.clone(),
-      vec![Int, Int, Str],
+      &test1.clone(),
+      &vec![Int, Int, Str],
       &mut Context::default()
     )
     .is_ok());
     // test1.2
     assert!(function_application_check(
-      test1.clone(),
-      vec![Int, Int, Str, Bool],
+      &test1.clone(),
+      &vec![Int, Int, Str, Bool],
       &mut Context::default()
     )
     .is_ok());
     // test1.3
     assert!(function_application_check(
-      test1.clone(),
-      vec![Int, Int, Str, Bool, Bool, Bool],
+      &test1.clone(),
+      &vec![Int, Int, Str, Bool, Bool, Bool],
       &mut Context::default()
     )
     .is_ok());
     assert!(function_application_check(
-      test1.clone(),
-      vec![Int, Int, Str, Bool],
+      &test1.clone(),
+      &vec![Int, Int, Str, Bool],
       &mut Context::default()
     )
     .is_ok());
     // test 2
     let test2 = vec![Star(Box::new(Str)), Char];
     // test 2.1
-    assert!(
-      function_application_check(test2.clone(), vec![Str, Char], &mut Context::default()).is_err()
-    );
-    assert!(
-      function_application_check(test2.clone(), vec![Char, Int], &mut Context::default()).is_err()
-    );
+    assert!(function_application_check(&test2, &vec![Str, Char], &mut Context::default()).is_err());
+    assert!(function_application_check(&test2, &vec![Char, Int], &mut Context::default()).is_err());
   }
 }

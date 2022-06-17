@@ -61,12 +61,12 @@ fn main() -> Result<()> {
     lib::type_check_files(&(args.files), &mut context)?;
     return Ok(());
   } else {
-    let out = lib::run(&(args.files), &mut state)?;
+    let out = lib::run(&(args.files), &mut state, &mut context)?;
     // println!("{out:#?}");
 
     if args.readline_mode {
       // readline mode
-      readline_mode(&mut state)?
+      readline_mode(&mut state, &mut context)?
     }
   };
 
@@ -81,7 +81,7 @@ fn create_file(path: &str) -> Result<()> {
 }
 
 /// readline loop
-fn readline_mode(state: &mut State) -> Result<()> {
+fn readline_mode(state: &mut State, context: &mut Context) -> Result<()> {
   let mut rl = Editor::<()>::new();
   create_file(HISTORY)?;
   if rl.load_history(HISTORY).is_err() {
@@ -100,7 +100,7 @@ fn readline_mode(state: &mut State) -> Result<()> {
         }
         // let extra = format!("REPL input {line}");
         let span = repl_to_span(&line); //::Span::new_extra(line.as_str(), extra.as_str());
-        let out = lib::run1(&span, state);
+        let out = lib::run1(&span, state, context);
         match out {
           Err(e) => println!("{e}"),
           Ok(x) => println!("{x}"),
