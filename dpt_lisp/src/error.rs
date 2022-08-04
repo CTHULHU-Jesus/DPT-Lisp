@@ -6,10 +6,11 @@ use nom::error::ParseError;
 use regex::Regex;
 use std::fs::File;
 use std::path::Path;
+use std::sync::Arc;
 // CONSTS
 // TYPES
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 /// Track location within a file so we know exactly where errors come from
 pub struct FileLocation {
   extra: InputOrigin,
@@ -41,6 +42,16 @@ pub enum ErrorKind {
 // IMPLS
 
 impl FileLocation {
+  /// Empty file location, for test code.
+  pub fn empty() -> Self {
+    FileLocation {
+      extra: InputOrigin::Repl(Arc::new(String::new())),
+      start_line: 0,
+      start_offset: 0,
+      end_line: 0,
+      end_offset: 0,
+    }
+  }
   pub fn new<'a, 'b>(start: Span<'a>, end: Option<Span<'b>>) -> Self {
     fn sub1_if_able(x: usize) -> usize {
       if x == 0 {

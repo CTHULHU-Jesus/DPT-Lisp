@@ -37,6 +37,8 @@ A scheme like language with types.
 
 # Completed features Features
 
+- types
+  - simple types
 - Let expressions
 - printing
 - initial parsing and evaluation

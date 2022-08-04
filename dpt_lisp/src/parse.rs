@@ -450,9 +450,62 @@ pub fn type_binding(s: Span) -> IResult<TypeBinding> {
       let (s, _) = whitespace(s)?;
       return IResult::Ok((s, Char));
     }
+    // Type level variable
+    fn type_var(s: Span) -> IResult<TypeBinding> {
+      let (s, _) = whitespace(s)?;
+      let (s, var) = many1(none_of(*RESTRICTED_CHARS))(s)?;
+      let (s, _) = whitespace(s)?;
+      let var: String = var.iter().collect();
+      return IResult::Ok((s, TypeVar(var)));
+    }
+    // Pair type
+    fn pair(s: Span) -> IResult<TypeBinding> {
+      let (s, _) = whitespace(s)?;
+      let (s, _) = tag("(")(s)?;
+      let (s, _) = whitespace(s)?;
+      let (s, _) = tag("Pair")(s)?;
+      let (s, _) = whitespace(s)?;
+      let (s, pos1) = position(s)?;
+      let (s, car) = any_type(s)?;
+      let (s, cdr) = any_type(s)?;
+      let (s, pos2) = position(s)?;
+      let (s, _) = tag(")")(s)?;
+      let (s, _) = whitespace(s)?;
+      // car and cdr are not alowed to be a star type
+      if car.is_star() || cdr.is_star() {
+        return IResult::Err(nom::Err::Failure(MyError::new_from_span(
+          ErrorKind::Parse,
+          pos1,
+          Some(pos2),
+        )));
+      }
+      return IResult::Ok((s, TypeBinding::Pair(Box::new(car), Box::new(cdr))));
+    }
+    // List type
+    fn list(s: Span) -> IResult<TypeBinding> {
+      let (s, _) = whitespace(s)?;
+      let (s, _) = tag("(")(s)?;
+      let (s, _) = whitespace(s)?;
+      let (s, _) = tag("List")(s)?;
+      let (s, _) = whitespace(s)?;
+      let (s, pos1) = position(s)?;
+      let (s, body) = any_type(s)?;
+      let (s, pos2) = position(s)?;
+      let (s, _) = tag(")")(s)?;
+      let (s, _) = whitespace(s)?;
+      // body is not alowed to be a star type
+      if body.is_star() {
+        return IResult::Err(nom::Err::Failure(MyError::new_from_span(
+          ErrorKind::Parse,
+          pos1,
+          Some(pos2),
+        )));
+      }
+      return IResult::Ok((s, TypeBinding::List(Box::new(body))));
+    }
     // Do the parseing
     return alt((
-      any, int, boolean, arrow, star, charector, string, unit, parens,
+      any, int, boolean, arrow, star, charector, string, unit, list, pair, parens, type_var,
     ))(s);
   }
 

@@ -20,6 +20,7 @@ pub mod TypeCheck;
 pub(crate) mod Interpreter;
 // pub use Interpreter::State;
 
+use TypeCheck::ProblemSet;
 // genral imports
 use anyhow::{anyhow, Result};
 use nom_locate::LocatedSpan;
@@ -32,7 +33,7 @@ use std::sync::{Arc, Mutex};
 // TYPES
 
 pub type Binding = (String, Option<TypeBinding>, Box<AST>);
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum TypeBinding {
   /// Type representing an arbitrary number of arguments of some type
   Star(Box<TypeBinding>),
@@ -48,12 +49,14 @@ pub enum TypeBinding {
   Char,
   /// The string type ("xxx")
   Str,
-  /// type of Unit
+  /// Type of Unit
   Unit,
-  // TODO
-  // TypeVar(String)
-  // Pair(Box<TypeBinding>, Box<TypeBinding>),
-  // List(Box<TypeBinding>)
+  /// Type level variable  
+  TypeVar(String),
+  /// Type of Pair (cons, car, cdr) (Pair Int x)
+  Pair(Box<TypeBinding>, Box<TypeBinding>),
+  /// Type of lists (List Int)
+  List(Box<TypeBinding>),
 }
 
 #[derive(Clone, Debug)]
@@ -75,7 +78,7 @@ struct StateInsides {
   up_scope: Option<State>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum InputOrigin {
   File(Arc<String>),
   Repl(Arc<String>),
@@ -151,9 +154,13 @@ pub fn parse_files(input: &[String]) -> Result<Vec<AST>> {
 /// Type check a list of files
 pub fn type_check_files(input: &[String], context: &mut Context) -> Result<()> {
   let asts = parse_files(input)?;
+  let mut problem_set = TypeCheck::ProblemSet::new();
+  // create problem set and do simple checks
   for mut ast in asts {
-    TypeCheck::type_check(&mut ast, context)?;
+    TypeCheck::type_check(&mut ast, context, &mut problem_set)?;
   }
+  // type unification
+  TypeCheck::type_unification(problem_set)?;
   return Ok(());
 }
 
@@ -166,10 +173,12 @@ pub fn type_check1(input: &Span, context: &mut Context) -> Result<()> {
 pub fn run(input: &[String], state: &mut State, context: &mut Context) -> Result<Value> {
   let mut ret = Value::Unit;
   let mut asts: Vec<AST> = parse_files(input)?;
+  let mut problem_set = TypeCheck::ProblemSet::new();
   // @TODO: type check asts
   for mut ast in asts.iter_mut() {
-    TypeCheck::type_check(&mut ast, context)?;
+    TypeCheck::type_check(&mut ast, context, &mut problem_set)?;
   }
+  TypeCheck::type_unification(problem_set)?;
   for ast in asts {
     ret = Interpreter::interperate(&ast, state)?;
   }
@@ -178,7 +187,9 @@ pub fn run(input: &[String], state: &mut State, context: &mut Context) -> Result
 
 pub fn run1(input: &Span, state: &mut State, context: &mut Context) -> Result<Value> {
   let mut parsed = parse_expr(input)?;
-  TypeCheck::type_check(&mut parsed, context)?;
+  let mut problem_set = TypeCheck::ProblemSet::new();
+  TypeCheck::type_check(&mut parsed, context, &mut problem_set)?;
+  TypeCheck::type_unification(problem_set)?;
   Ok(Interpreter::interperate(&parsed, state)?)
 }
 
@@ -434,6 +445,9 @@ impl Display for TypeBinding {
       Char => write!(f, "Char"),
       Str => write!(f, "Str"),
       Unit => write!(f, "Unit"),
+      List(body) => write!(f, "(List {body})"),
+      Pair(car, cdr) => write!(f, "(Pair {car} {cdr})"),
+      TypeVar(x) => write!(f, "{x}"),
       Star(body) => write!(f, "*{body}"),
       Arrow(body, ret) => {
         write!(f, "(-> ")?;
@@ -517,6 +531,28 @@ mod test_types {
     let stri = TypeBinding::Str;
     assert!(stri_p.is_ok());
     assert_eq!(stri_p.unwrap(), stri);
+    // Test TypeVar
+    let typ_var_p = TypeBinding::from_str("x");
+    let typ_var = TypeBinding::TypeVar("x".to_owned());
+    assert!(typ_var_p.is_ok());
+    assert_eq!(typ_var_p.unwrap(), typ_var);
+    assert!(TypeBinding::from_str("x[").is_err());
+
+    // Test Pair
+    let pair_p = TypeBinding::from_str("(Pair Int Unit)");
+    let pair = TypeBinding::Pair(Box::new(TypeBinding::Int), Box::new(TypeBinding::Unit));
+    assert!(pair_p.is_ok());
+    assert_eq!(pair_p.unwrap(), pair);
+    assert!(TypeBinding::from_str("(Pair Int *Unit)").is_err());
+    assert!(TypeBinding::from_str("(Pair *Int Unit)").is_err());
+    assert!(TypeBinding::from_str("(Pair *Int *Unit)").is_err());
+
+    // Test List
+    let list_p = TypeBinding::from_str("(List Str)");
+    let list = TypeBinding::List(Box::new(TypeBinding::Str));
+    assert!(list_p.is_ok());
+    assert_eq!(list_p.unwrap(), list);
+    assert!(TypeBinding::from_str("(List *Int)").is_err());
 
     // Test Unit
     let unit_p = TypeBinding::from_str("Unit");
@@ -543,8 +579,8 @@ mod test_types {
     assert!(arrow_p.is_ok());
     assert_eq!(arrow_p.unwrap(), arrow);
 
-    assert!(TypeBinding::from_str("-> Any* Char Int").is_err());
-    assert!(TypeBinding::from_str("-> Any Char Int*").is_err());
+    assert!(TypeBinding::from_str("-> *Any Char Int").is_err());
+    assert!(TypeBinding::from_str("-> Any Char *Int").is_err());
   }
 }
 
