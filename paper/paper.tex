@@ -1,0 +1,112 @@
+\documentclass[12pt]{report}
+\usepackage[utf8]{inputenc}
+\usepackage{graphicx}
+\usepackage{biblatex}
+\usepackage{amsmath}
+\usepackage{array,longtable}
+\graphicspath{ {images/} }
+
+\addbibresource{./bibliography.bib}
+
+% math mode colom types
+\newcolumntype{L}{>{$}l<{$}} 
+\newcolumntype{C}{>{$}c<{$}} 
+\newcolumntype{R}{>{$}r<{$}} 
+
+\begin{document}
+\title{
+{Thesis Title}\\
+{\large Institution Name}\\
+%{\includegraphics{university.jpg}}
+}
+\author{Author Name}
+\date{Day Month Year}
+
+
+\chapter*{Abstract}
+Abstract goes here
+
+\chapter*{Dedication}
+To mum and dad
+
+% \chapter*{Declaration}
+% I declare that..
+
+\chapter*{Acknowledgements}
+I want to thank...
+
+\tableofcontents
+
+\chapter{Introduction}
+This is a useful project because it lets people learn about type systems.
+
+This language is simple to read, haveing been built off of LISP's syntax, but allows the user to see all of the components of a type system (atomic types, sum types/enums, and parametric polymorphism). The user is then allowed to manipulate all of these constructs with most of LISP's classic constructs.
+
+\chapter{Background}
+\section{lambda calculus}
+\section{lisp}
+\begin{paragraph}
+  %\qquad
+  Lisp is a syntactically simple high level language. There are many dialects of LISP that have minor differences, for this section I will be referencing Scheme\cite{r7rs} for this section, but most of this information is broadly applicable. It is built off of the idea of S-expressions.\cite{OGLISPpaper} An S-expression is functionally similar to prefix notation (i.e. instead of writing $2+3*7-2$ we would write $(+\ 2\ (-\ (*\ 3\ 7\ )\ 2)\ )$). This means that most expressions in lisp take the form of $(function\ args*)$ , but there are exceptions like `let` and `lambda` expressions that have a bit more to there structure.
+
+  What makes lisp special is that you write code the same way you write data, allowing you to use the same tools you use to manipulate data with functions to allow you to manipulate code with macros. This exact feature of LISP makes it easy to test most programming language ideas because instead of implementing an entirely new language to test a few features, you can instead write a few macros in lisp to test your ideas. It is also preferred because of its syntactic simplicity, as writing LISP is basically equivalent to writing an AST (Abstract syntax trees). % LISP code looks like an AST I don't know if that is convoyed like how I want
+
+\end{paragraph}
+\subsection{history}
+\begin{paragraph}
+  \qquad xxc
+\end{paragraph}
+\section{type theory}
+
+\chapter{Language Definitions}
+\begin{paragraph}
+  We used LISP like syntax to implement our language because of the simplicity involved. We do lack a few features, mostly steming from the limitations of haveing a type system, like quoting and macros. For the most part it is a LISP with the addition of types in square brackets.
+
+  For my implimentation I used a parseing combinator library called nom\cite{nom}. Parseing combenators \cite{Leijen2001ParsecDS} allow for easy parseing in-language, without a tools like lex and yacc\cite{lexandyacc}. parseing combenators in nom take the form of functions that take 1 argument, the text to be parsed), and return ether an error, or the parsed data and the rest of the text. Nom also gives you a variaty of ways to  combine these functions like many0 and many1 that act like + and * do in regular expressions.
+\end{paragraph}
+\section{Syntax}
+
+\begin{longtable}{RLR}
+      p\ ::= &e^+&\text{A program is one or more expressions}\\
+      e\ ::= &(e\ e^*)&\text{an S-expression is an expression}\\
+        |&v&\text{A variable is an expression}\\
+        |&a&\text{An atom is an expression}\\
+        |&(\text{let}\ (\{(b)\}^*)\ e^+)&\text{A let expression is an expression}\\
+        |&(\text{letrec}\ (\{(b)\}^*)\ e^+)&\text{A let-rec expression is an expression}\\
+        |&(\text{define}\ b)&\text{A define expression is an expression}\\
+        |&(\text{set}\ v\ e)&\text{A set expression is an expression}\\
+        |&(\text{lambda}\ [t]?\ (\{v\ [t]\}^*)\ e^+ )&\text{A lambda expression is an expression}\\
+        |&(\text{llambda}\ [t]?\ (\{v\ [t]\}^*)\ e^+ )&\text{A lazy-lambda expression is an expression}\\
+        |&\text{enum ...} & \\
+        |&\text{match ...} & \\
+        a\ ::=&\text{an integer} | \text{A string surrounded by ``}\\
+            |& unit &\text{Unit}\\
+            |& \#'c & \text{where c is a character}\\
+            |& \#t\ |\#f & \text{True and False}\\
+         b\ ::= &v\ [t]?\ e & \text{A binding}\\
+         v\ ::= & ... &\text{A variable}\\
+         t\ ::= & ... &\text{A type}
+\end{longtable}
+xvg
+\section{Semantics}
+\section{Formal Evaluation Judgements}
+\section{Formal Type Judgements}
+\section{Unification}
+my implementation of unifications comes from \cite{Norvig1991CorrectingAW} and \cite{inproceedings}.
+
+
+\chapter{Future Work}
+allow values in the type system for a full dependently typed language
+% \input{chapters/chapter04}
+
+\chapter{Conclusion}
+% \input{chapters/conclusion}
+
+
+
+\printbibliography
+
+\appendix
+\chapter{Appendix Title}
+% \input{chapters/appendix}
+\end{document}

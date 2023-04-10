@@ -6,14 +6,25 @@ edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
+
 [dependencies]
 clap   = { version = "3.0.5", features = ["suggestions","color",
 			 	 	 				 	 									 	  "regex","wrap_help",
 																					"unicode","env",
-																					"derive"] }
+																					"derive"], optional = true }
+
+rustyline = "9.1.2"
+
 anyhow = "^1.0"
 nom 	 = "^7"
 nom_locate = "^4"
-rustyline = "9.1.2"
 regex = "^1"
 lazy_static = "^1"
+
+[features]
+build-binary = ["clap"]
+
+# [[bin]]
+# name = "dpt_lisp"
+# requierd-features = ["build-binary"]
+

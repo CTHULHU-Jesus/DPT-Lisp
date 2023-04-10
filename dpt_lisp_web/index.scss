@@ -1,0 +1,82 @@
+
+.input-area {
+		width: 100%;
+		//bottom: 0px;
+		background-color: #000;
+		color: #fff;
+		//position: absolute;
+		padding-top:20px;
+		padding-bottom:50px;
+		text-align:left;
+		font-size:30px;
+		font-weight:bold;
+
+}
+textarea {
+		width: 99%;
+}
+html, body {
+	display: flex;
+	flex-direction: row-reverse;
+	justify-content: flex-end;
+		background: #333;
+		height: 100%;
+		width: 100%;
+		margin: 0;
+}
+.infowindow {
+		padding: 10px;
+		width: 24%;
+		margin: 5px;
+		display: flex;
+		justify-content: flex-end;
+		self-align: end;
+		background: #666;
+		.helplist {
+
+				display: grid;
+				grid-template-columns: 35% 65%;
+				h1,h2,h3,h4 {
+						grid-column-start: 1;
+						grid-column-end: 3;
+				}
+				p {
+				}
+		}
+}
+.term {
+	display: flex;
+	align-self: stretch;
+	flex-flow: column-reverse;
+	width: 75%;
+	a {
+			display: flex;
+			justify-content: center;
+			text-align: center;
+	}
+}
+.log {
+	display: flex;
+		align-self: stretch;
+		flex-flow: column;
+		//display: grid;
+		// grid-template-columns: 100%;
+		blockquote {
+				display: flex;
+				align-self: start;
+				width: 100%;
+				background: #666;
+				margin-bottom: 5px;
+				margin-top: 5px; 
+				margin-left: 10px; 
+				margin-right: 10px; 
+		}
+		.value {
+				
+				color: white;
+		}
+		.error {
+				color: red;
+		}
+		
+}

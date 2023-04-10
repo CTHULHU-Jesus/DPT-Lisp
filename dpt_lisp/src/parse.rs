@@ -1,16 +1,5 @@
 // IMPORTS
-
-use super::{
-  find_builtin, Binding, ErrorKind, FileLocation, IResult, InputOrigin, Interpreter, MyError, Span,
-  State, TypeBinding,
-};
-use anyhow::{anyhow, Result};
-use lazy_static::lazy_static;
-use nom::{
-  branch::alt,
-  bytes::complete::tag,
-  character::complete::*,
-  combinator::{cut, map, opt},
+use super::{Binding, ErrorKind, FileLocation, IResult, InputOrigin, Interpreter, MyError, Span, State, TypeBinding,}; use anyhow::{anyhow, Result}; use lazy_static::lazy_static; use nom::{branch::alt, bytes::complete::tag, character::complete::*, combinator::{cut, map, opt, peek},
   multi::{many0, many1},
   InputIter,
 };
@@ -25,6 +14,9 @@ lazy_static! {
     static ref __RESTRICTED_CHARS: String = vec!["()'#[]\".", WHITESPACE].join("");
     /// List of characters that cant be used in variable names
     static ref RESTRICTED_CHARS: &'static str = __RESTRICTED_CHARS.as_str();
+    static ref __RESTRICTED_CHARS_WITH_NUMBERS__ : String = [*RESTRICTED_CHARS,"0123456789"].join("");
+    /// List of characters that cant be used in variable names including 0-9
+    static ref RESTRICTED_CHARS_WITH_NUMBERS : &'static str= __RESTRICTED_CHARS_WITH_NUMBERS__.as_str();
 }
 // TYPES
 #[derive(Clone, Debug)]
@@ -42,8 +34,25 @@ pub enum AST {
   Val(Value, FileLocation),
   /// Add a variable (with value ) to current scope
   Define(Binding, FileLocation),
+  /// Node that lets you define mutual recursive functions
+ LetRec(Vec<Binding>, Vec<AST>, FileLocation),
+  /// Node for createing an Enum (Sum Types)
+  Enum(String, Vec<(String, u64)>, Vec<(String, Option<TypeBinding>)>, FileLocation),
+  /// Match statement for unpacking enums
+  Match(Box<AST>, Vec<(MatchCondition, Vec<AST>)>, FileLocation),
   /// Set pre defined variable with a value
   Set(String, Box<AST>, FileLocation),
+}
+
+#[derive(Clone, Debug)]
+/// condition for a match
+pub enum MatchCondition {
+  /// constant value (constructor name, value)
+  Const(String, Option<AST>),
+  /// single variable (construcor name, var name)
+  SingleV(String, String),
+  /// Default condition
+  Default,
 }
 
 /// LBuiltinF (Lisp builtin) is the function pointer type
@@ -56,18 +65,22 @@ pub type LBuiltinM = fn(&mut State, &mut Vec<AST>) -> Result<Value, MyError>;
 /// There are two types of function - builtin and lambda
 #[derive(Clone)]
 pub enum LFunction {
+  /// Enum/Sum type constructor (enum constructor name, optional type contained)
+  EnumConstructor(String, Option<TypeBinding>),
   /// (name, function pointer)
   BuiltinF(String, LBuiltinF),
   /// (name, function pointer)
   BuiltinM(String, LBuiltinM),
-  /// lambda function (args, body), args are a list of variable names (types comeing soon //TODO)
-  LambdaF(Vec<(String, TypeBinding)>, Vec<AST>),
-  /// lambda macro (args, body), args are a list of variable names (types comeing soon //TODO)
-  LambdaM(Vec<(String, TypeBinding)>, Vec<AST>),
+  /// lambda function (args, return type ,body), args are a list of variable names and types
+  LambdaF(Vec<(String, TypeBinding)>, Option<TypeBinding>, Vec<AST>),
+  /// lambda lazy (args, return type, body), args are a list of variable names  and types
+  LambdaL(Vec<(String, TypeBinding)>, Option<TypeBinding>, Vec<AST>),
 }
 
 #[derive(Clone, Debug)]
 pub enum Value {
+  /// enum constructed value (constructor name, value)
+  EnumVal(String, Option<Box<Value>>),
   /// A char value
   Char(char),
   /// Clasic Pair value (cons, car, cdr operations)
@@ -146,6 +159,15 @@ fn whitespace(s: Span) -> IResult<()> {
   return IResult::Ok((s, ()));
 }
 
+/// identifier parser
+fn identifier(s: Span) -> IResult<String> {
+  let (s, fst_char) = none_of(*RESTRICTED_CHARS_WITH_NUMBERS)(s)?;
+  let (s, mut rest) = many1(none_of(*RESTRICTED_CHARS))(s)?;
+  rest.insert(0, fst_char);
+  let var: String = rest.into_iter().collect();
+  return IResult::Ok((s, var));
+}
+
 /// Parse a char in a string (allows escape sequences)
 /// TODO{allow escape sequences}
 fn generic_char(s: Span) -> IResult<char> {
@@ -158,7 +180,9 @@ fn all_expr(s: Span) -> IResult<AST> {
   let (s, _) = whitespace(s)?;
   let (s, _) = opt(comment)(s)?;
   let (s, _) = whitespace(s)?;
-  let (s, e) = alt((lambda, define, set, let_expr, expr, value, variable))(s)?;
+  let (s, e) = alt((
+    lambda, define, enum_expr, match_expr, set, let_expr, expr, value, variable,
+  ))(s)?;
   let (s, _) = whitespace(s)?;
   return IResult::Ok((s, e));
 }
@@ -166,8 +190,10 @@ fn all_expr(s: Span) -> IResult<AST> {
 /// Parse annonamas functions
 fn lambda(s: Span) -> IResult<AST> {
   fn var(s: Span) -> IResult<(String, TypeBinding)> {
+    let (s, _) = whitespace(s)?;
     let (s, var) = many1(none_of(*RESTRICTED_CHARS))(s)?;
     let (s, _) = whitespace(s)?;
+    // TODO throw custom error about missing type bindings
     let (s, typ) = type_binding(s)?;
     let var: String = var.into_iter().collect();
     return IResult::Ok((s, (var, typ)));
@@ -176,7 +202,9 @@ fn lambda(s: Span) -> IResult<AST> {
   let (s, _) = char('(')(s)?;
   let (s, _) = whitespace(s)?;
   // macro or function
-  let (s, kind) = alt((tag("mlambda"), tag("mλ"), tag("λ"), tag("lambda")))(s)?;
+  let (s, kind) = alt((tag("llambda"), tag("lλ"), tag("λ"), tag("lambda")))(s)?;
+  let (s, _) = whitespace(s)?;
+  let (s, ret_typ) = opt(type_binding)(s)?;
   let (s, _) = whitespace(s)?;
   let (s, _) = char('(')(s)?;
   let (s, args) = many0(var)(s)?;
@@ -190,11 +218,117 @@ fn lambda(s: Span) -> IResult<AST> {
   let location = FileLocation::new(pos1, Some(pos2));
   // If function
   if vec!["λ", "lambda"].contains(&kind) {
-    return IResult::Ok((s, AST::Fun(LFunction::LambdaF(args, body), location)));
+    return IResult::Ok((
+      s,
+      AST::Fun(LFunction::LambdaF(args, ret_typ, body), location),
+    ));
   } else {
     // If macro
-    return IResult::Ok((s, AST::Fun(LFunction::LambdaM(args, body), location)));
+    return IResult::Ok((
+      s,
+      AST::Fun(LFunction::LambdaL(args, ret_typ, body), location),
+    ));
   }
+}
+
+/// Parse a match expression
+fn match_expr(s: Span) -> IResult<AST> {
+  fn match_condition(s: Span) -> IResult<MatchCondition> {
+    fn const_cond(s: Span) -> IResult<MatchCondition> {
+      let (s, constructor) = many1(none_of(*RESTRICTED_CHARS))(s)?;
+      let (s, _) = whitespace(s)?;
+      let (s, v) = peek(opt(tag(")")))(s)?;
+      let constructor: String = constructor.into_iter().collect();
+      if let Some(_) = v {
+        return IResult::Ok((s, MatchCondition::Const(constructor, None)));
+      } else {
+        let (s, val) = value(s)?;
+        return IResult::Ok((s, MatchCondition::Const(constructor, Some(val))));
+      }
+    }
+    fn single_var(s: Span) -> IResult<MatchCondition> {
+      let (s, constructor) = many1(none_of(*RESTRICTED_CHARS))(s)?;
+      let (s, _) = whitespace(s)?;
+      let (s, var) = many1(none_of(*RESTRICTED_CHARS))(s)?;
+      let constructor: String = constructor.into_iter().collect();
+      let var: String = var.into_iter().collect();
+      return IResult::Ok((s, MatchCondition::SingleV(constructor, var)));
+    }
+    fn default(s: Span) -> IResult<MatchCondition> {
+      let (s, _) = tag("default")(s)?;
+      return IResult::Ok((s, MatchCondition::Default));
+    }
+    let (s, _) = char('(')(s)?;
+    let (s, _) = whitespace(s)?;
+    let (s, x) = alt((default, const_cond, single_var))(s)?;
+    let (s, _) = whitespace(s)?;
+    let (s, _) = char(')')(s)?;
+    let (s, _) = whitespace(s)?;
+    return IResult::Ok((s, x));
+  }
+  fn match_row(s: Span) -> IResult<(MatchCondition, Vec<AST>)> {
+    let (s, _) = char('(')(s)?;
+    let (s, _) = whitespace(s)?;
+    let (s, cond) = match_condition(s)?;
+    let (s, body) = many1(all_expr)(s)?;
+    let (s, _) = whitespace(s)?;
+    let (s, _) = char(')')(s)?;
+    let (s, _) = whitespace(s)?;
+    return IResult::Ok((s, (cond, body)));
+  }
+  let (s, pos1) = position(s)?;
+  let (s, _) = char('(')(s)?;
+  let (s, _) = whitespace(s)?;
+  let (s, _) = tag("match")(s)?;
+  let (s, _) = whitespace(s)?;
+  let (s, input) = all_expr(s)?;
+  let (s, _) = whitespace(s)?;
+  let (s, conditions) = many1(match_row)(s)?;
+  let (s, _) = char(')')(s)?;
+  let (s, pos2) = position(s)?;
+  let (s, _) = whitespace(s)?;
+  let location = FileLocation::new(pos1, Some(pos2));
+  return IResult::Ok((s, AST::Match(Box::new(input), conditions, location)));
+}
+
+/// Parse an Enum expression
+fn enum_expr(s: Span,) -> IResult<AST> {
+  fn elem(s: Span,scope_number:u64) -> IResult<(String, Option<TypeBinding>)> {
+    let (s, _) = char('(')(s)?;
+    let (s, _) = whitespace(s)?;
+    let (s, var) = identifier(s)?;
+    let (s, _) = whitespace(s)?;
+    let (s, typ) = opt(type_binding)(s)?;
+    let (s, _) = whitespace(s)?;
+    let (s, _) = char(')')(s)?;
+    let (s, _) = whitespace(s)?;
+    // let var: String = var.into_iter().collect();
+    return IResult::Ok((s, (var, typ.map(|t| t.set_type_var_scope(scope_number)))));
+  }
+  fn type_vars(s: Span,varNum: u64) -> IResult<Vec<(String,u64)>> {
+todo!()
+} 
+
+  let scope_number = get_new_typevar_scope();
+  let (s, pos1) = position(s)?;
+  let (s, _) = char('(')(s)?;
+  let (s, _) = whitespace(s)?;
+  let (s, _) = tag("enum")(s)?;
+  let (s, _) = whitespace(s)?;
+  // name
+  let (s, name) = identifier(s)?;
+  let (s, _) = whitespace(s)?;
+  // TypeVars
+let (s, type_vars_vec) = type_vars(s,scope_number)?;
+  let (s, _) = whitespace(s)?;
+  // constructors
+  let (s, elems) = many1(|s| elem(s,scope_number))(s)?;
+  let (s, _) = char(')')(s)?;
+  let (s, pos2) = position(s)?;
+  let (s, _) = whitespace(s)?;
+  let location = FileLocation::new(pos1, Some(pos2));
+  // let name: String = name.into_iter().collect();
+  return IResult::Ok((s, AST::Enum(name, type_vars_vec, elems, location)));
 }
 
 /// Parse a define expression
@@ -252,7 +386,7 @@ fn let_expr(s: Span) -> IResult<AST> {
   let (s, pos1) = position(s)?;
   let (s, _) = char('(')(s)?;
   let (s, _) = whitespace(s)?;
-  let (s, _) = tag("let")(s)?;
+  let (s, let_typ) = alt((tag("let"), tag("letrec")))(s)?;
   let (s, _) = whitespace(s)?;
   let (s, _) = char('(')(s)?;
   let (s, bindings) = many0(binding)(s)?;
@@ -262,7 +396,11 @@ fn let_expr(s: Span) -> IResult<AST> {
   let (s, pos2) = position(s)?;
   let (s, _) = whitespace(s)?;
   let location = FileLocation::new(pos1, Some(pos2));
-  return IResult::Ok((s, AST::Let(bindings, body, location)));
+  if let_typ.to_string() == "let" {
+    return IResult::Ok((s, AST::Let(bindings, body, location)));
+  } else {
+    return IResult::Ok((s, AST::LetRec(bindings, body, location)));
+  }
 }
 
 /// Parse an s-expression
@@ -347,6 +485,15 @@ fn comment(s: Span) -> IResult<()> {
     return IResult::Ok((s, ()));
   }
 }
+/// generates a new number whenever called
+/// used to give each type binding its own scope
+pub fn get_new_typevar_scope() -> u64 {
+  unsafe {
+    static mut x: u64 = 0;
+    x += 1;
+    x
+  }
+}
 
 /// Parse a type binding
 /// e.x. [-> Int Int Int] for a function
@@ -354,6 +501,11 @@ fn comment(s: Span) -> IResult<()> {
 /// [-> *String String] any number of strings to one string
 pub fn type_binding(s: Span) -> IResult<TypeBinding> {
   use TypeBinding::*;
+  static mut scope_num: u64 = 0;
+  unsafe {
+    // get new scope number
+    scope_num = get_new_typevar_scope();
+  }
   fn any_type(s: Span) -> IResult<TypeBinding> {
     // any type (Any)
     fn any(s: Span) -> IResult<TypeBinding> {
@@ -441,22 +593,50 @@ pub fn type_binding(s: Span) -> IResult<TypeBinding> {
       let (s, _) = whitespace(s)?;
       return IResult::Ok((s, Unit));
     }
-    // parentheses around a type
+    // parentheses around one type or more
+    // produces an UnknownPType(String, Vec<TypeBinding>),
+    // iff and only if there is more than one type
     fn parens(s: Span) -> IResult<TypeBinding> {
+      let (s, pos1) = position(s)?;
       let (s, _) = tag("(")(s)?;
       let (s, _) = whitespace(s)?;
-      let (s, body) = any_type(s)?;
+      let (s, bodys) = many1(any_type)(s)?;
       let (s, _) = tag(")")(s)?;
+      let (s, pos2) = position(s)?;
       let (s, _) = whitespace(s)?;
-      return IResult::Ok((s, Char));
+      if bodys.len() == 1 {
+        // bodus guarentead to have at least 1
+        // element because of the use of "many1"
+        // in its creations.
+        return IResult::Ok((s, bodys[0].clone()));
+      } else {
+return IResult::Ok((s,TypeBinding::TypeConstructorApp(Box::new(bodys[0].clone()), bodys[1..].to_vec())));
+        // match &bodys[0] {
+        //   UnknownType(name) => return IResult::Ok((s, UnknownPType(name.to_string(), bodys[1..].to_vec()))),
+        //   _ => {
+        //     return IResult::Err( nom::Err::Failure(MyError::new_from_span(
+        //       ErrorKind::TypeCheck("Wrong application of types.".to_string()),
+        //       pos1,
+        //       Some(pos2),
+        //     )))
+        //   }
+        // }
+      }
     }
-    // Type level variable
+    // Type level variable or an Unknown type
+    // Type level variables can only be 1 charector long
     fn type_var(s: Span) -> IResult<TypeBinding> {
       let (s, _) = whitespace(s)?;
-      let (s, var) = many1(none_of(*RESTRICTED_CHARS))(s)?;
+      let (s, var) = identifier(s)?;
       let (s, _) = whitespace(s)?;
-      let var: String = var.iter().collect();
-      return IResult::Ok((s, TypeVar(var)));
+      // Type Variables are only 1 charector long
+      if var.chars().count() == 1 {
+        unsafe {
+          return IResult::Ok((s, TypeVar((var, scope_num))));
+        }
+      } else {
+        return IResult::Ok((s, UnknownType(var)));
+      }
     }
     // Pair type
     fn pair(s: Span) -> IResult<TypeBinding> {
@@ -521,6 +701,59 @@ pub fn type_binding(s: Span) -> IResult<TypeBinding> {
 // TRAITS
 // IMPLS
 
+impl MatchCondition {
+  /// See if a |value| matches against condition. |loc| is the location of the match condition. If a condition is matched
+  /// then the bindings are returned. If no bindings were found then an empty vector
+  /// is returned.
+  pub fn matchc(
+    &self,
+    value: Value,
+    loc: &FileLocation,
+    state: &mut State,
+  ) -> Option<Vec<Binding>> {
+    // get the value
+    let (arg_constructor, arg_contents) = match value {
+      Value::EnumVal(name, opt_val) => (name, opt_val),
+      _ => return None,
+    };
+    match self {
+      MatchCondition::Const(constructor, Some(val)) => {
+        let contents = match val {
+          AST::Val(contents, _) => contents,
+          _ => return None,
+        };
+        if constructor == &arg_constructor
+          && arg_contents.is_some()
+          && contents == &*arg_contents.unwrap()
+        {
+          Some(vec![])
+        } else {
+          None
+        }
+      }
+      MatchCondition::Const(constructor, None) => {
+        if constructor == &arg_constructor {
+          Some(vec![])
+        } else {
+          None
+        }
+      }
+      MatchCondition::SingleV(constructor, var_name) => {
+        if constructor == &arg_constructor && arg_contents.is_some() {
+          Some(vec![(
+            var_name.to_string(),
+            None,
+            Box::new(AST::Val(*arg_contents.unwrap(), loc.clone())),
+          )])
+        } else {
+          None
+        }
+      }
+      &MatchCondition::Default => Some(vec![]),
+    }
+  }
+}
+
 impl Value {
   /// If the value is an Meval (a placeholder) evaluate it to its final value.
   pub fn eval_if_needed(&self) -> Result<Value, MyError> {
@@ -571,14 +804,21 @@ impl Value {
     }
   }
 }
+
 impl Display for LFunction {
   fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
     use LFunction::*;
     match &self {
+      EnumConstructor(name, _) => write!(f, "{name}"),
       BuiltinF(name, _) => write!(f, "{}", name),
       BuiltinM(name, _) => write!(f, "{}", name),
-      LambdaF(args, body) => {
-        write!(f, "(λ (")?;
+      LambdaF(args, typ, body) => {
+        write!(f, "(λ ")?;
+        if let Some(typ) = typ {
+          write!(f, " {typ} ")?;
+        }
+        write!(f, "(")?;
+
         for (arg, typ) in args {
           write!(f, "{arg} [{typ}] ")?;
         }
@@ -588,8 +828,12 @@ impl Display for LFunction {
         }
         write!(f, ")")
       }
-      LambdaM(args, body) => {
-        write!(f, "(mλ (")?;
+      LambdaL(args, typ, body) => {
+        write!(f, "(mλ ")?;
+        if let Some(typ) = typ {
+          write!(f, " {typ} ")?;
+        }
+        write!(f, "(")?;
         for (arg, typ) in args {
           write!(f, "{arg} [{typ}] ")?;
         }
@@ -607,10 +851,31 @@ impl std::fmt::Debug for LFunction {
   fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
     use LFunction::*;
     match &self {
+      EnumConstructor(name, opt_typ) => {
+        write!(f, "lfunction::EnumConstructor({name:?},{opt_typ:?}")
+      }
       BuiltinF(name, _) => write!(f, "LFunction::BultinF({name:?},function_pointer)"),
       BuiltinM(name, _) => write!(f, "LFunction::BultinM({name:?},function_pointer)"),
-      LambdaF(args, body) => write!(f, "LFunction::LambdaF({args:?},{body:?})"),
-      LambdaM(args, body) => write!(f, "LFunction::LambdaM({args:?},{body:?})"),
+      LambdaF(args, typ, body) => write!(f, "LFunction::LambdaF({args:?},{typ:?},{body:?})"),
+      LambdaL(args, typ, body) => write!(f, "LFunction::LambdaM({args:?},{typ:?},{body:?})"),
+    }
+  }
+}
+
+impl PartialEq for Value {
+  fn eq(&self, other: &Self) -> bool {
+    use Value::*;
+    match (self, other) {
+      (Char(a), Char(b)) => a == b,
+      (Pair(a1, a2), Pair(b1, b2)) => a1 == b1 && a2 == b2,
+      (Int(a), Int(b)) => a == b,
+      (Str(a), Str(b)) => a == b,
+      (List(a), List(b)) => a == b,
+      (Fun(_a, _a_state), Fun(_b, _b_state)) => todo!(),
+      (Bool(a), Bool(b)) => a == b,
+      (Meval(_a, _a_state), Meval(_b, _b_state)) => false,
+      (Unit, Unit) => true,
+      _ => false,
     }
   }
 }
@@ -619,6 +884,13 @@ impl Display for Value {
   fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
     use Value::*;
     match self {
+      EnumVal(name, val) => {
+        if let Some(val) = val {
+          write!(f, "({name} {val})")
+        } else {
+          write!(f, "({name} )")
+        }
+      }
       Pair(car, cdr) => write!(f, "(cons {car} {cdr})"),
       Fun(fun, _state) => write!(f, "{fun}"),
       Unit => write!(f, "unit"),
@@ -644,9 +916,49 @@ impl Display for Value {
   }
 }
 
+impl Display for MatchCondition {
+  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    use MatchCondition::*;
+    match self {
+      Const(name, body) => {
+        if let Some(body) = body {
+          write!(f, "({name} {body})")
+        } else {
+          write!(f, "(name )")
+        }
+      }
+      SingleV(name, body) => write!(f, "({name} {body})"),
+      Default => write!(f, "(default)"),
+    }
+  }
+}
+
 impl Display for AST {
   fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
     match self {
+      AST::Enum(name, constructors, _) => {
+        write!(f, "(enum {name} ")?;
+        for (constructor, typ) in constructors {
+          if let Some(typ) = typ {
+            write!(f, "({constructor} {typ})")?;
+          } else {
+            write!(f, "({constructor})")?;
+          }
+        }
+        write!(f, ")")
+      }
+      AST::Match(val, conditions, _) => {
+        write!(f, "(match {val} ")?;
+        for (cond, body) in conditions {
+          write!(f, "({cond} ")?;
+          for x in body {
+            write!(f, "{x} ")?;
+          }
+          write!(f, ")")?;
+        }
+
+        write!(f, ")")
+      }
       AST::Var(a, _) => write!(f, "{a}"),
       AST::Val(a, _) => write!(f, "{a}"),
       AST::Fun(fun, _) => write!(f, "{fun}"),
@@ -655,6 +967,20 @@ impl Display for AST {
         None => write!(f, "(define {var} {def})"),
       },
       AST::Set(var, def, _) => write!(f, "(set {var} {def})"),
+      AST::LetRec(bindings, body, _) => {
+        write!(f, "(letrec (")?;
+        for (var, typ, val) in bindings {
+          match typ {
+            Some(typ) => write!(f, "({var} [{typ}] {val})")?,
+            None => write!(f, "({var} {val})")?,
+          };
+        }
+        write!(f, ") ")?;
+        for expr in body {
+          write!(f, "{expr} ")?;
+        }
+        write!(f, ") ")
+      }
       AST::Let(bindings, body, _) => {
         write!(f, "(let (")?;
         for (var, typ, val) in bindings {
@@ -684,11 +1010,14 @@ impl AST {
   pub fn position(&self) -> FileLocation {
     use AST::*;
     match self {
+      Enum(_, _, l) => l.clone(),
+      Match(_, _, l) => l.clone(),
       Set(_, _, l) => l.clone(),
       Define(_, l) => l.clone(),
       Var(_, l) => l.clone(),
       Fun(_, l) => l.clone(),
       Let(_, _, l) => l.clone(),
+      LetRec(_, _, l) => l.clone(),
       Val(_, l) => l.clone(),
       Sexpr(_, l) => l.clone(),
     }

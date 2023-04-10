@@ -1,3 +1,5 @@
+use crate::{Parse::type_binding, TypeBinding};
+
 // IMPORTS
 use super::{Binding, ErrorKind, FileLocation, LFunction, MyError, Parse::AST, Span, State, Value};
 use anyhow::{anyhow, Result};
@@ -35,15 +37,40 @@ pub fn interperate(input: &AST, state: &mut State) -> Result<Value, MyError> {
       let val: Value = interperate(val, state)?;
       to_myerror(state.declare(var.to_string(), val.clone()), loc)?;
       Ok(val)
+
     }
+		Match( val, conditions, loc) => {
+			let val: Value = interperate(val, state)?;
+			let mut ret_val : Result<Value,MyError> = Ok(Value::Unit);
+			for (condition, body) in conditions {
+				if let Some(bindings) = condition.matchc(val.clone(),loc , state) {
+					// found match for val
+					// add bindings to state
+					let mut new_state = state.new_scope();
+					to_myerror(add_bindings(&bindings, &mut new_state), &loc)?;
+					// evaluate body
+					ret_val = body
+								    .iter()
+								    .try_fold(Value::Unit, |_, ast| interperate(ast, &mut new_state));
+					// exit match condition
+					break
+				}
+			}
+			ret_val
+		}
     Fun(fun, _) => Ok(Value::Fun(fun.to_owned(), state.clone())),
-    Let(bindings, body, loc) => {
+		Let(bindings, body, loc)
+		| LetRec(bindings,body,loc) => {
       let mut new_state = state.new_scope();
       to_myerror(add_bindings(bindings, &mut new_state), &loc)?;
       body
         .iter()
         .try_fold(Value::Unit, |_, ast| interperate(ast, &mut new_state))
     }
+		Enum (_name, members, loc) => {
+			to_myerror(enum_add_member_functions(&members, state), &loc)?;
+			Ok(Value::Unit)
+		}
     Sexpr(exprs, loc) => eval(exprs, state, &loc),
     Var(x, l) => match state.lookup(x.to_string()) {
       Some(val) => val.eval_if_needed(),
@@ -62,7 +89,7 @@ fn eval(exprs: &[AST], state: &mut State, loc: &FileLocation) -> Result<Value, M
         state,
         &mut exprs[1..].iter().map(|x| x.to_owned()).collect(),
       ),
-      LFunction::LambdaM(ref _args, ref _body) => {
+      LFunction::LambdaL(ref _args, ref _ret_typ ,ref _body) => {
         let args: Vec<Value> = exprs[1..]
           .into_iter()
           .map(|x| Value::Meval(Box::new(x.to_owned()), state.clone()))
@@ -93,6 +120,33 @@ fn apply(
   loc: &FileLocation,
 ) -> Result<Value, MyError> {
   match fun {
+		LFunction::EnumConstructor(name, val_typ) => {
+			if let Some(_) = val_typ {
+				if args.len() != 1 {
+					return Err(
+						RuntimeError::ExecError(anyhow!(
+            "wrong number of arguments. Expected {}, found {}.",
+						1,
+            args.len()
+						))
+							.into_myerror(loc),
+					);
+				};
+					Ok(Value::EnumVal(name.to_string(), Some(Box::new(args[0].clone()))))
+				} else {
+					if args.len() != 0 {
+						return Err(
+							RuntimeError::ExecError(anyhow!(
+							"wrong number of arguments. Expected {}, found {}.",
+							0,
+							args.len()
+							))
+							.into_myerror(loc),
+						);
+					};
+					Ok(Value::EnumVal(name.to_string(), None))
+			}
+		}
     LFunction::BuiltinM(_name, f) => {
       return f(
         state,
@@ -105,7 +159,8 @@ fn apply(
     LFunction::BuiltinF(_name, f) => {
       return to_myerror(f(&mut args.to_vec()), loc);
     }
-    LFunction::LambdaF(vars, body) | LFunction::LambdaM(vars, body) => {
+		LFunction::LambdaF(vars, _ret_typ ,body)
+		| LFunction::LambdaL(vars, _ret_typ, body) => {
       // bind vars to args in new scope
       if args.len() != vars.len() {
         return Err(
@@ -127,6 +182,14 @@ fn apply(
         .try_fold(Value::Unit, |_, ast| interperate(ast, &mut new_scope))
     }
   }
+}
+
+/// adds enum functions (like Some and None for option type)
+fn enum_add_member_functions(membors: &[(String,Option<TypeBinding>)], state: &mut State) -> Result<()> {
+for (name,typ) in membors {
+state.declare(name.clone(),Value::Fun(LFunction::EnumConstructor(name.clone(), typ.clone()),state.clone()))?;
+}
+	Ok(())
 }
 
 /// add bindings to state

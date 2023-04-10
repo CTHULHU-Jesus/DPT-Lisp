@@ -1,0 +1,10 @@
+;; test pair ops
+(let ((p1 (cons 1 2))
+			(p2 (cons 1 (cons 2 3)))
+			)
+	(assert (eq? 1 (car p1))
+	        (eq? 2 (cdr p1))
+	        (eq? 1 (car p2))
+	        (eq? 2 (car (cdr p2)))
+	        (eq? 3 (cdr (cdr p2))))
+	)

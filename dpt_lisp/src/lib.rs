@@ -11,7 +11,6 @@ pub use Error::{ErrorKind, FileLocation, MyError};
 
 #[path = "builtin.rs"]
 pub mod Builtin;
-pub use Builtin::find_builtin;
 
 #[path = "type_check.rs"]
 pub mod TypeCheck;
@@ -24,8 +23,9 @@ use TypeCheck::ProblemSet;
 // genral imports
 use anyhow::{anyhow, Result};
 use nom_locate::LocatedSpan;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fmt::Display;
+use std::hash::Hash;
 use std::str::FromStr;
 use std::sync::{Arc, Mutex};
 
@@ -35,6 +35,17 @@ use std::sync::{Arc, Mutex};
 pub type Binding = (String, Option<TypeBinding>, Box<AST>);
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum TypeBinding {
+  // todo wrap the names of the varients in an arc.
+  /// Enum/Sum type (Name of overall type, Names of type variables, names of type varients)
+  Enum(
+    String,
+    Vec<(String, u64)>,
+    Vec<(String, Option<TypeBinding>)>,
+  ),
+  /// Type constructor application (Constructor, args)
+  TypeConstructorApp(Box<TypeBinding>, Vec<TypeBinding>),
+  /// Unknown normal type
+  UnknownType(String),
   /// Type representing an arbitrary number of arguments of some type
   Star(Box<TypeBinding>),
   /// Any type (use wisely)
@@ -52,19 +63,26 @@ pub enum TypeBinding {
   /// Type of Unit
   Unit,
   /// Type level variable  
-  TypeVar(String),
+  TypeVar((String, u64)),
   /// Type of Pair (cons, car, cdr) (Pair Int x)
   Pair(Box<TypeBinding>, Box<TypeBinding>),
   /// Type of lists (List Int)
   List(Box<TypeBinding>),
 }
 
+/// A struct that holds the types of variables and the deffinitons of constructed types.
+/// If it cannot find a deffiniton in this context, it goes up one level.
 #[derive(Clone, Debug)]
 pub struct Context(Arc<Mutex<ContextInsides>>);
 
+/// A helper struct for |Context|
 #[derive(Clone, Debug)]
 struct ContextInsides {
+  /// A map between the variables and there types
   type_map: HashMap<String, TypeBinding>,
+  /// A map between types and there deffiniton
+  type_defn_map: HashMap<String, TypeBinding>,
+  /// A ''pointer'' to the upper context
   up_scope: Option<Context>,
 }
 
@@ -160,13 +178,37 @@ pub fn type_check_files(input: &[String], context: &mut Context) -> Result<()> {
     TypeCheck::type_check(&mut ast, context, &mut problem_set)?;
   }
   // type unification
-  TypeCheck::type_unification(problem_set)?;
+  TypeCheck::type_unification(&mut problem_set)?;
   return Ok(());
 }
 
 /// Type check one expression
 pub fn type_check1(input: &Span, context: &mut Context) -> Result<()> {
   todo!()
+}
+
+pub fn load_standard_library(state: &mut State, context: &mut Context) -> Result<()> {
+  // load library as text
+  let std_lib = repl_to_span(include_str!("std.lsp"));
+  // parse text
+  let parsed = Parse::parse(std_lib);
+  let mut asts = match parsed {
+    std::result::Result::Ok((_s, mut out)) => out,
+    Err(nom::Err::Error(e)) => return Err(anyhow!("{}", e.to_string())),
+    Err(nom::Err::Incomplete(_)) => return Err(anyhow!("Parseing incomplete")),
+    Err(nom::Err::Failure(e)) => return Err(anyhow!("{}", e.to_string())),
+  };
+  // type check parsed text
+  let mut problem_set = TypeCheck::ProblemSet::new();
+  for mut ast in asts.iter_mut() {
+    let _typed = TypeCheck::type_check(&mut ast, context, &mut problem_set)?;
+  }
+  TypeCheck::type_unification(&mut problem_set)?;
+  // execute type checked things
+  for mut ast in asts.into_iter() {
+    let _out = Interpreter::interperate(&mut ast, state)?;
+  }
+  Ok(())
 }
 
 /// run a slice of inputs through the parser, concatenate them and then type check and run the code.
@@ -178,7 +220,7 @@ pub fn run(input: &[String], state: &mut State, context: &mut Context) -> Result
   for mut ast in asts.iter_mut() {
     TypeCheck::type_check(&mut ast, context, &mut problem_set)?;
   }
-  TypeCheck::type_unification(problem_set)?;
+  TypeCheck::type_unification(&mut problem_set)?;
   for ast in asts {
     ret = Interpreter::interperate(&ast, state)?;
   }
@@ -189,7 +231,7 @@ pub fn run1(input: &Span, state: &mut State, context: &mut Context) -> Result<Va
   let mut parsed = parse_expr(input)?;
   let mut problem_set = TypeCheck::ProblemSet::new();
   TypeCheck::type_check(&mut parsed, context, &mut problem_set)?;
-  TypeCheck::type_unification(problem_set)?;
+  TypeCheck::type_unification(&mut problem_set)?;
   Ok(Interpreter::interperate(&parsed, state)?)
 }
 
@@ -235,6 +277,21 @@ impl Context {
     insides.lock().unwrap().declare(var, typ)
   }
 
+  /// Declare a new type deffinition in scope
+  /// Errors if variable already exists
+  pub fn define_type(&mut self, var: String, typ: TypeBinding) -> Result<()> {
+    let Context(ref mut insides) = self;
+    // TODO find a way around unwrap
+    insides.lock().unwrap().define_type(var, typ)
+  }
+
+  /// Find the type for a definition in scope
+  pub fn lookup_type(&self, var: String) -> Option<TypeBinding> {
+    let Context(ref insides) = self;
+    // TODO find a way around unwrap
+    insides.lock().unwrap().lookup_type(var)
+  }
+
   /// Look up the type of a variable
   pub fn lookup(&self, var: String) -> Option<TypeBinding> {
     let Context(ref insides) = self;
@@ -254,6 +311,7 @@ impl ContextInsides {
   pub fn new(up_scope: Option<Context>) -> Self {
     Self {
       type_map: HashMap::new(),
+      type_defn_map: HashMap::new(),
       up_scope: up_scope,
     }
   }
@@ -268,6 +326,30 @@ impl ContextInsides {
         self.type_map.insert(var, typ);
         Ok(())
       }
+    }
+  }
+  /// Declare a new type deffinition in scope
+  /// Errors if variable already exists
+  pub fn define_type(&mut self, var: String, typ: TypeBinding) -> Result<()> {
+    match self.type_defn_map.get(&var) {
+      Some(_) => Err(anyhow!("Type \"{var}\" already declared in current scope")),
+      None => {
+        self.type_map.insert(var, typ);
+        Ok(())
+      }
+    }
+  }
+
+  /// Find the type for a definition in scope
+  pub fn lookup_type(&self, var: String) -> Option<TypeBinding> {
+    match self.type_defn_map.get(&var) {
+      // return value in current scope
+      Some(x) => Some(x.to_owned()),
+      // return value in higher scope
+      None => match &self.up_scope {
+        Some(scope) => scope.lookup_type(var),
+        None => None,
+      },
     }
   }
 
@@ -287,8 +369,10 @@ impl ContextInsides {
 
 impl Default for ContextInsides {
   fn default() -> Self {
+    let init_con = Builtin::inital_context();
     Self {
-      type_map: Builtin::inital_context(),
+      type_map: init_con.0,
+      type_defn_map: init_con.1,
       up_scope: None,
     }
   }
@@ -396,6 +480,116 @@ impl Default for StateInsides {
 }
 
 impl TypeBinding {
+  /// substitutes unknown types iff they have a deffinition in context
+  /// in the case of an unknonPtype, add problems to the problem set to make it correct
+  /// Returns an error if an unknown type was found, but has no deffinition in context
+  /// or the wrong number of arguments were suplied
+  pub fn substitute_unknown(
+    &mut self,
+    context: &mut Context,
+    problem_set: &mut ProblemSet,
+  ) -> Result<()> {
+    match self {
+      TypeBinding::UnknownType(name) => {
+        if let Some(typ) = context.lookup_type(name.to_string()) {
+          // check that if typ is a type Constructor, it has 0 arguments
+          match typ {
+            TypeBinding::Enum(ref e_name, ref type_vars, ref _bindings) => {
+              if type_vars.len() != 0 {
+                return Err(anyhow!("Wrong number of arguments supplied to type constructor {e_name}, expected 0, found {}", type_vars.len()));
+              }
+            }
+            _ => (),
+          };
+          *self = typ;
+        } else {
+          return Err(anyhow!("could not find the type {name} in current context, if this is ment to be a type variable it must be 1 charector long"));
+        }
+      }
+      TypeBinding::TypeConstructorApp(ref mut constructor, ref mut args) => {
+        for arg in args {
+          arg.substitute_unknown(context, problem_set)?;
+        }
+        constructor.substitute_unknown(context, problem_set)?;
+      }
+      TypeBinding::Arrow(ref mut args, ref mut ret_typ) => {
+        for arg in args {
+          arg.substitute_unknown(context, problem_set)?;
+        }
+        ret_typ.substitute_unknown(context, problem_set)?;
+      }
+      TypeBinding::Enum(_name, _type_vars, ref mut constructors) => {
+        for (_name, opt_typ) in constructors {
+          if let Some(ref mut typ) = opt_typ {
+            typ.substitute_unknown(context, problem_set)?
+          }
+        }
+      }
+      TypeBinding::List(ref mut typ) => {
+        typ.substitute_unknown(context, problem_set)?;
+      }
+      TypeBinding::Pair(ref mut typ1, ref mut typ2) => {
+        typ1.substitute_unknown(context, problem_set)?;
+        typ2.substitute_unknown(context, problem_set)?;
+      }
+      TypeBinding::Star(ref mut typ) => {
+        typ.substitute_unknown(context, problem_set)?;
+      }
+      _ => (),
+    };
+    Ok(())
+  }
+
+  /// returns the type vaiables used within the type
+  pub fn get_type_vars(&self) -> HashSet<(String, u64)> {
+    let mut ret: HashSet<(String, u64)> = HashSet::new();
+    match self {
+      TypeBinding::Arrow(ref args, ref ret_typ) => {
+        for arg in args {
+          ret = ret.union(&arg.get_type_vars()).cloned().collect();
+        }
+        ret = ret.union(&ret_typ.get_type_vars()).cloned().collect();
+      }
+      TypeBinding::Enum(_name, type_vars, _constructors) => {
+        // I don't need to look in the constructors because Enums
+        // are only allowed to have type variables declared in the typevars space.
+        ret = ret
+          .union(&type_vars.iter().cloned().collect())
+          .cloned()
+          .collect();
+      }
+      TypeBinding::List(typ) => {
+        ret = ret.union(&typ.get_type_vars()).cloned().collect();
+      }
+      TypeBinding::Pair(typ1, typ2) => {
+        ret = ret.union(&typ1.get_type_vars()).cloned().collect();
+        ret = ret.union(&typ2.get_type_vars()).cloned().collect();
+      }
+      TypeBinding::Star(typ) => {
+        ret = ret.union(&typ.get_type_vars()).cloned().collect();
+      }
+      TypeBinding::TypeConstructorApp(cons, ref args) => {
+        for arg in args {
+          ret = ret.union(&arg.get_type_vars()).cloned().collect();
+        }
+        ret = ret.union(&cons.get_type_vars()).cloned().collect();
+        ()
+      }
+      TypeBinding::TypeVar(v) => {
+        ret.insert(v.clone());
+      }
+      // TypeBinding::&UnknownType
+      _ => (),
+    }
+    return ret;
+  }
+  /// returns true if the type is a function type
+  pub fn is_function(&self) -> bool {
+    match self {
+      &TypeBinding::Arrow(_, _) => true,
+      _ => false,
+    }
+  }
   /// Returns true if the type is a star type (e.x. *Int)
   pub fn is_star(&self) -> bool {
     match self {
@@ -403,35 +597,62 @@ impl TypeBinding {
       _ => false,
     }
   }
+  /// updates the type variables in the type
+  /// to be in a new scope.
+  /// used on the types of functions durring
+  /// function application to avoid occours check failures
+  /// during unification (example (car (car x)) =>
+  /// (-> (Pair x y) x) (-> (Pair x y) x)  leads to x occours in (Pair x y) errors).
+  pub fn new_type_var_scope(&self) -> Self {
+    let scope_number = Parse::get_new_typevar_scope();
+    self.set_type_var_scope(scope_number)
 
-  /// Returns true if one type can be coerced to the other
-  /// When used in an assignment use this funtion like this:
-  /// user_defined_type.same_as(other_type)
-  pub fn same_as(&self, other: Self, context: &Context) -> bool {
-    const any: TypeBinding = TypeBinding::Any;
+}
 
-    if self == &any || self == &other {
-      true
-    } else {
-      match self {
-        TypeBinding::Arrow(a_args, a_ret) => match other {
-          TypeBinding::Arrow(b_args, b_ret) => {
-            if a_args.len() != b_args.len() {
-              false
-            } else {
-              let mut acc = true;
-              for (a_arg, b_arg) in a_args.into_iter().zip(b_args.into_iter()) {
-                acc = acc && a_arg.same_as(b_arg, context);
-              }
-              acc && a_ret.same_as(*b_ret, context)
-            }
+    /// sets the type var scope number
+    pub fn set_type_var_scope(&self,scope_number: u64) -> Self {
+    let scope_number = Parse::get_new_typevar_scope();
+    fn new_scope_helper(x: &mut TypeBinding, scope_number: u64) {
+      match x {
+        TypeBinding::Any => (),
+        TypeBinding::Int => (),
+        TypeBinding::Bool => (),
+        TypeBinding::Char => (),
+        TypeBinding::Str => (),
+        TypeBinding::Unit => (),
+        TypeBinding::UnknownType(_) => (),
+        TypeBinding::Enum(_name, ref mut typ_vars, _opt_typ) => {
+          for (_name, ref mut num) in typ_vars {
+            *num = scope_number;
           }
-          _ => false,
-        },
-        TypeBinding::Star(a) => a.same_as(other, context),
-        _ => false,
+        }
+        TypeBinding::TypeConstructorApp(ref mut cons, ref mut typ_args) => {
+          new_scope_helper(cons, scope_number);
+          for ref mut typ in typ_args {
+            new_scope_helper(typ, scope_number);
+          }
+        }
+        TypeBinding::Star(ref mut a) => new_scope_helper(a, scope_number),
+        TypeBinding::List(ref mut a) => new_scope_helper(a, scope_number),
+        TypeBinding::Pair(ref mut a, ref mut b) => {
+          new_scope_helper(a, scope_number);
+          new_scope_helper(b, scope_number);
+        }
+        TypeBinding::Arrow(ref mut args, ref mut ret) => {
+          for mut a in args {
+            new_scope_helper(&mut a, scope_number);
+          }
+          new_scope_helper(ret, scope_number);
+        }
+        TypeBinding::TypeVar((_, ref mut num)) => {
+          *num = scope_number;
+        }
       }
     }
+
+    let mut x = self.clone();
+    new_scope_helper(&mut x, scope_number);
+    x
   }
 }
 
@@ -447,8 +668,32 @@ impl Display for TypeBinding {
       Unit => write!(f, "Unit"),
       List(body) => write!(f, "(List {body})"),
       Pair(car, cdr) => write!(f, "(Pair {car} {cdr})"),
-      TypeVar(x) => write!(f, "{x}"),
+      TypeVar(x) => write!(f, "{}", x.0),
       Star(body) => write!(f, "*{body}"),
+      TypeBinding::UnknownType(name) => write!(f, "{name}"),
+      TypeBinding::TypeConstructorApp(name, typ_args) => {
+        write!(f, "({name} ")?;
+        for typ in typ_args {
+          write!(f, "{typ} ")?;
+        }
+        write!(f, ") ")
+      }
+      Enum(name, typ_vars, varients) => {
+        write!(f, "(Enum {name} ");
+        write!(f, "[ ")?;
+        for var in typ_vars {
+          write!(f, "{}, ", var.0)?;
+        }
+        write!(f, " ] ")?;
+        for (name, typ) in varients {
+          if let Some(typ) = typ {
+            write!(f, "({name} {typ}) ")?;
+          } else {
+            write!(f, "({name} ) ")?;
+          }
+        }
+        write!(f, ")")
+      }
       Arrow(body, ret) => {
         write!(f, "(-> ")?;
         for arg in body {
@@ -532,10 +777,24 @@ mod test_types {
     assert!(stri_p.is_ok());
     assert_eq!(stri_p.unwrap(), stri);
     // Test TypeVar
-    let typ_var_p = TypeBinding::from_str("x");
-    let typ_var = TypeBinding::TypeVar("x".to_owned());
-    assert!(typ_var_p.is_ok());
-    assert_eq!(typ_var_p.unwrap(), typ_var);
+    let typ_var_p1 = TypeBinding::from_str("x");
+    let typ_var_p2 = TypeBinding::from_str("y");
+    let mut scope1: u64 = 0;
+    assert!(typ_var_p1.is_ok());
+    assert!(typ_var_p2.is_ok());
+    assert!(match typ_var_p1 {
+      Ok(TypeBinding::TypeVar((x, scope))) => {
+        scope1 = scope;
+        x == "x".to_owned()
+      }
+      _ => false,
+    });
+    assert!(match typ_var_p2 {
+      Ok(TypeBinding::TypeVar((y, scope))) => {
+        scope1 != scope && y == "y".to_owned()
+      }
+      _ => false,
+    });
     assert!(TypeBinding::from_str("x[").is_err());
 
     // Test Pair
