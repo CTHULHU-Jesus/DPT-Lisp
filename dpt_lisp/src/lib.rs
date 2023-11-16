@@ -611,7 +611,7 @@ impl TypeBinding {
 
     /// sets the type var scope number
     pub fn set_type_var_scope(&self,scope_number: u64) -> Self {
-    let scope_number = Parse::get_new_typevar_scope();
+    // let scope_number = Parse::get_new_typevar_scope();
     fn new_scope_helper(x: &mut TypeBinding, scope_number: u64) {
       match x {
         TypeBinding::Any => (),
@@ -778,6 +778,7 @@ mod test_types {
     assert_eq!(stri_p.unwrap(), stri);
     // Test TypeVar
     let typ_var_p1 = TypeBinding::from_str("x");
+eprintln!("{typ_var_p1:?}");
     let typ_var_p2 = TypeBinding::from_str("y");
     let mut scope1: u64 = 0;
     assert!(typ_var_p1.is_ok());
@@ -840,6 +841,7 @@ mod test_types {
 
     assert!(TypeBinding::from_str("-> *Any Char Int").is_err());
     assert!(TypeBinding::from_str("-> Any Char *Int").is_err());
+
   }
 }
 

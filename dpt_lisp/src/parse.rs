@@ -1,5 +1,15 @@
 // IMPORTS
-use super::{Binding, ErrorKind, FileLocation, IResult, InputOrigin, Interpreter, MyError, Span, State, TypeBinding,}; use anyhow::{anyhow, Result}; use lazy_static::lazy_static; use nom::{branch::alt, bytes::complete::tag, character::complete::*, combinator::{cut, map, opt, peek},
+use super::{
+  Binding, ErrorKind, FileLocation, IResult, InputOrigin, Interpreter, MyError, Span, State,
+  TypeBinding,
+};
+use anyhow::{anyhow, Result};
+use lazy_static::lazy_static;
+use nom::{
+  branch::alt,
+  bytes::complete::tag,
+  character::complete::*,
+  combinator::{cut, map, opt, peek},
   multi::{many0, many1},
   InputIter,
 };
@@ -35,9 +45,14 @@ pub enum AST {
   /// Add a variable (with value ) to current scope
   Define(Binding, FileLocation),
   /// Node that lets you define mutual recursive functions
- LetRec(Vec<Binding>, Vec<AST>, FileLocation),
+  LetRec(Vec<Binding>, Vec<AST>, FileLocation),
   /// Node for createing an Enum (Sum Types)
-  Enum(String, Vec<(String, u64)>, Vec<(String, Option<TypeBinding>)>, FileLocation),
+  Enum(
+    String,
+    Vec<(String, u64)>,
+    Vec<(String, Option<TypeBinding>)>,
+    FileLocation,
+  ),
   /// Match statement for unpacking enums
   Match(Box<AST>, Vec<(MatchCondition, Vec<AST>)>, FileLocation),
   /// Set pre defined variable with a value
@@ -162,7 +177,7 @@ fn whitespace(s: Span) -> IResult<()> {
 /// identifier parser
 fn identifier(s: Span) -> IResult<String> {
   let (s, fst_char) = none_of(*RESTRICTED_CHARS_WITH_NUMBERS)(s)?;
-  let (s, mut rest) = many1(none_of(*RESTRICTED_CHARS))(s)?;
+  let (s, mut rest) = many0(none_of(*RESTRICTED_CHARS))(s)?;
   rest.insert(0, fst_char);
   let var: String = rest.into_iter().collect();
   return IResult::Ok((s, var));
@@ -292,8 +307,8 @@ fn match_expr(s: Span) -> IResult<AST> {
 }
 
 /// Parse an Enum expression
-fn enum_expr(s: Span,) -> IResult<AST> {
-  fn elem(s: Span,scope_number:u64) -> IResult<(String, Option<TypeBinding>)> {
+fn enum_expr(s: Span) -> IResult<AST> {
+  fn elem(s: Span, scope_number: u64) -> IResult<(String, Option<TypeBinding>)> {
     let (s, _) = char('(')(s)?;
     let (s, _) = whitespace(s)?;
     let (s, var) = identifier(s)?;
@@ -305,9 +320,34 @@ fn enum_expr(s: Span,) -> IResult<AST> {
     // let var: String = var.into_iter().collect();
     return IResult::Ok((s, (var, typ.map(|t| t.set_type_var_scope(scope_number)))));
   }
-  fn type_vars(s: Span,varNum: u64) -> IResult<Vec<(String,u64)>> {
-todo!()
-} 
+  fn type_vars(s: Span, varNum: u64) -> IResult<Vec<(String, u64)>> {
+    fn type_var(s: Span) -> IResult<String> {
+      let (s, _) = whitespace(s)?;
+
+      let (s, pos1) = position(s)?;
+      let (s, var) = identifier(s)?;
+      let (s, pos2) = position(s)?;
+      let (s, _) = whitespace(s)?;
+      // Type Variables are only 1 charector long
+      if var.chars().count() == 1 {
+        unsafe {
+          return IResult::Ok((s, var));
+        }
+      } else {
+        return IResult::Err(nom::Err::Failure(MyError::new_from_span(
+          ErrorKind::TypeCheck("Type variables must only be one charerector long".to_string()),
+          pos1,
+          Some(pos2),
+        )));
+      }
+    }
+    let (s, t_vec): (Span, Vec<String>) = many0(type_var)(s)?;
+    let t_vec: Vec<(String, u64)> = t_vec
+      .iter()
+      .map(move |type_var| (type_var.clone(), varNum))
+      .collect();
+    return IResult::Ok((s, t_vec));
+  }
 
   let scope_number = get_new_typevar_scope();
   let (s, pos1) = position(s)?;
@@ -319,16 +359,18 @@ todo!()
   let (s, name) = identifier(s)?;
   let (s, _) = whitespace(s)?;
   // TypeVars
-let (s, type_vars_vec) = type_vars(s,scope_number)?;
+  let (s, type_vars_vec) = type_vars(s, scope_number)?;
   let (s, _) = whitespace(s)?;
   // constructors
-  let (s, elems) = many1(|s| elem(s,scope_number))(s)?;
+  let (s, elems) = many1(|s| elem(s, scope_number))(s)?;
   let (s, _) = char(')')(s)?;
   let (s, pos2) = position(s)?;
   let (s, _) = whitespace(s)?;
   let location = FileLocation::new(pos1, Some(pos2));
   // let name: String = name.into_iter().collect();
-  return IResult::Ok((s, AST::Enum(name, type_vars_vec, elems, location)));
+  let ret = AST::Enum(name, type_vars_vec, elems, location);
+  println!("{ret:?}");
+  return IResult::Ok((s, ret));
 }
 
 /// Parse a define expression
@@ -509,24 +551,28 @@ pub fn type_binding(s: Span) -> IResult<TypeBinding> {
   fn any_type(s: Span) -> IResult<TypeBinding> {
     // any type (Any)
     fn any(s: Span) -> IResult<TypeBinding> {
+      // println!("any? {s:?}");
       let (s, _) = tag("Any")(s)?;
       let (s, _) = whitespace(s)?;
       return IResult::Ok((s, Any));
     }
     // Integer type (Int)
     fn int(s: Span) -> IResult<TypeBinding> {
+      // println!("int? {s:?}");
       let (s, _) = tag("Int")(s)?;
       let (s, _) = whitespace(s)?;
       return IResult::Ok((s, Int));
     }
     // Boolean type (Bool)
     fn boolean(s: Span) -> IResult<TypeBinding> {
+      // println!("Bool? {s:?}");
       let (s, _) = tag("Bool")(s)?;
       let (s, _) = whitespace(s)?;
       return IResult::Ok((s, Bool));
     }
     // Function/Macro type (args types,return type) (-> x x y)
     fn arrow(s: Span) -> IResult<TypeBinding> {
+      // println!("arrow? {s:?}");
       /// Checks that, if there is a * type, it is at the end.
       fn check_star(args: &[TypeBinding]) -> bool {
         for (num, arg) in args.into_iter().enumerate() {
@@ -537,13 +583,14 @@ pub fn type_binding(s: Span) -> IResult<TypeBinding> {
         return true;
       }
       let (s, pos1) = position(s)?;
+      let (s, _) = whitespace(s)?;
       let (s, _) = tag("->")(s)?;
       let (s, _) = whitespace(s)?;
       let (s, body) = many1(any_type)(s)?;
       let (s, pos2) = position(s)?;
       let mut body: VecDeque<TypeBinding> = body.into_iter().collect();
       // last type is the return types
-      // can unwrap because I used many1 earlyer
+      // unwrap is safe because I used many1 earlyer (there is at least 1 element in the vec)
       let ret = body.pop_back().unwrap();
       // all but the last type are args types
       let args: Vec<_> = body.into_iter().collect();
@@ -560,6 +607,7 @@ pub fn type_binding(s: Span) -> IResult<TypeBinding> {
     }
     // Star type (*x)
     fn star(s: Span) -> IResult<TypeBinding> {
+      // println!("star? {s:?}");
       let (s, pos1) = position(s)?;
       let (s, _) = tag("*")(s)?;
       let (s, body) = any_type(s)?;
@@ -573,22 +621,26 @@ pub fn type_binding(s: Span) -> IResult<TypeBinding> {
           Some(pos2),
         )));
       }
+      // println!("star! {body:?}");
       return IResult::Ok((s, Star(Box::new(body))));
     }
     // Charector type (Char)
     fn charector(s: Span) -> IResult<TypeBinding> {
+      // println!("Char? {s:?}");
       let (s, _) = tag("Char")(s)?;
       let (s, _) = whitespace(s)?;
       return IResult::Ok((s, Char));
     }
     // The string type (Str)
     fn string(s: Span) -> IResult<TypeBinding> {
+      // println!("Str? {s:?}");
       let (s, _) = tag("Str")(s)?;
       let (s, _) = whitespace(s)?;
       return IResult::Ok((s, Str));
     }
     // type of Unit
     fn unit(s: Span) -> IResult<TypeBinding> {
+      // println!("Unit? {s:?}");
       let (s, _) = tag("Unit")(s)?;
       let (s, _) = whitespace(s)?;
       return IResult::Ok((s, Unit));
@@ -597,7 +649,9 @@ pub fn type_binding(s: Span) -> IResult<TypeBinding> {
     // produces an UnknownPType(String, Vec<TypeBinding>),
     // iff and only if there is more than one type
     fn parens(s: Span) -> IResult<TypeBinding> {
+      // println!("parens? {s:?}");
       let (s, pos1) = position(s)?;
+      let (s, _) = whitespace(s)?;
       let (s, _) = tag("(")(s)?;
       let (s, _) = whitespace(s)?;
       let (s, bodys) = many1(any_type)(s)?;
@@ -610,7 +664,10 @@ pub fn type_binding(s: Span) -> IResult<TypeBinding> {
         // in its creations.
         return IResult::Ok((s, bodys[0].clone()));
       } else {
-return IResult::Ok((s,TypeBinding::TypeConstructorApp(Box::new(bodys[0].clone()), bodys[1..].to_vec())));
+        return IResult::Ok((
+          s,
+          TypeBinding::TypeConstructorApp(Box::new(bodys[0].clone()), bodys[1..].to_vec()),
+        ));
         // match &bodys[0] {
         //   UnknownType(name) => return IResult::Ok((s, UnknownPType(name.to_string(), bodys[1..].to_vec()))),
         //   _ => {
@@ -626,10 +683,12 @@ return IResult::Ok((s,TypeBinding::TypeConstructorApp(Box::new(bodys[0].clone())
     // Type level variable or an Unknown type
     // Type level variables can only be 1 charector long
     fn type_var(s: Span) -> IResult<TypeBinding> {
+      // println!("Tvar? {s:?}");
       let (s, _) = whitespace(s)?;
       let (s, var) = identifier(s)?;
       let (s, _) = whitespace(s)?;
       // Type Variables are only 1 charector long
+      // println!("Tvar! {var:?}");
       if var.chars().count() == 1 {
         unsafe {
           return IResult::Ok((s, TypeVar((var, scope_num))));
@@ -640,6 +699,7 @@ return IResult::Ok((s,TypeBinding::TypeConstructorApp(Box::new(bodys[0].clone())
     }
     // Pair type
     fn pair(s: Span) -> IResult<TypeBinding> {
+      // println!("Pair? {s:?}");
       let (s, _) = whitespace(s)?;
       let (s, _) = tag("(")(s)?;
       let (s, _) = whitespace(s)?;
@@ -663,13 +723,16 @@ return IResult::Ok((s,TypeBinding::TypeConstructorApp(Box::new(bodys[0].clone())
     }
     // List type
     fn list(s: Span) -> IResult<TypeBinding> {
+      // println!("List? {s:?}");
       let (s, _) = whitespace(s)?;
       let (s, _) = tag("(")(s)?;
       let (s, _) = whitespace(s)?;
       let (s, _) = tag("List")(s)?;
       let (s, _) = whitespace(s)?;
       let (s, pos1) = position(s)?;
+      // println!("List2? {s:?}");
       let (s, body) = any_type(s)?;
+      let (s, _) = whitespace(s)?;
       let (s, pos2) = position(s)?;
       let (s, _) = tag(")")(s)?;
       let (s, _) = whitespace(s)?;
@@ -681,6 +744,7 @@ return IResult::Ok((s,TypeBinding::TypeConstructorApp(Box::new(bodys[0].clone())
           Some(pos2),
         )));
       }
+      // println!("List! {body:?}");
       return IResult::Ok((s, TypeBinding::List(Box::new(body))));
     }
     // Do the parseing
@@ -875,6 +939,9 @@ impl PartialEq for Value {
       (Bool(a), Bool(b)) => a == b,
       (Meval(_a, _a_state), Meval(_b, _b_state)) => false,
       (Unit, Unit) => true,
+      (EnumVal(name_a, body_a), EnumVal(name_b, body_b)) => {
+        (name_a == name_b) && (body_a == body_b)
+      }
       _ => false,
     }
   }
@@ -936,8 +1003,12 @@ impl Display for MatchCondition {
 impl Display for AST {
   fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
     match self {
-      AST::Enum(name, constructors, _) => {
+      AST::Enum(name, type_vars, constructors, _) => {
         write!(f, "(enum {name} ")?;
+
+        for (name, scope_num) in type_vars {
+          write!(f, "{name} ")?;
+        }
         for (constructor, typ) in constructors {
           if let Some(typ) = typ {
             write!(f, "({constructor} {typ})")?;
@@ -1010,7 +1081,7 @@ impl AST {
   pub fn position(&self) -> FileLocation {
     use AST::*;
     match self {
-      Enum(_, _, l) => l.clone(),
+      Enum(_, _, _, l) => l.clone(),
       Match(_, _, l) => l.clone(),
       Set(_, _, l) => l.clone(),
       Define(_, l) => l.clone(),

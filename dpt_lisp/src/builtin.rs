@@ -410,8 +410,8 @@ fn is_equal(l: &mut Vec<Value>) -> Result<Value> {
   if l.len() != 2 {
     return Err(anyhow!("wrong number of arguments"));
   }
-  let a = &l[0];
-  let b = &l[1];
+  let a : &Value = &l[0];
+  let b : &Value = &l[1];
   Ok(Value::Bool(a == b))
 }
 /// crashes if all values are not true

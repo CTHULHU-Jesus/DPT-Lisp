@@ -67,8 +67,8 @@ pub fn interperate(input: &AST, state: &mut State) -> Result<Value, MyError> {
         .iter()
         .try_fold(Value::Unit, |_, ast| interperate(ast, &mut new_state))
     }
-		Enum (_name, members, loc) => {
-			to_myerror(enum_add_member_functions(&members, state), &loc)?;
+		Enum (_name, typ_args, membors , loc) => {
+			to_myerror(enum_add_member_functions(&membors, state), &loc)?;
 			Ok(Value::Unit)
 		}
     Sexpr(exprs, loc) => eval(exprs, state, &loc),

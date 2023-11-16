@@ -4,6 +4,8 @@
 \usepackage{biblatex}
 \usepackage{amsmath}
 \usepackage{array,longtable}
+\usepackage{mathpartir}
+\usepackage{listings}
 \graphicspath{ {images/} }
 
 \addbibresource{./bibliography.bib}
@@ -27,7 +29,7 @@
 Abstract goes here
 
 \chapter*{Dedication}
-To mum and dad
+To Alex
 
 % \chapter*{Declaration}
 % I declare that..
@@ -40,6 +42,12 @@ I want to thank...
 \chapter{Introduction}
 This is a useful project because it lets people learn about type systems.
 
+polymophism and type level variables
+
+hasnt hit mainstream
+
+don't need to talk about lisp syntax
+
 This language is simple to read, haveing been built off of LISP's syntax, but allows the user to see all of the components of a type system (atomic types, sum types/enums, and parametric polymorphism). The user is then allowed to manipulate all of these constructs with most of LISP's classic constructs.
 
 \chapter{Background}
@@ -47,25 +55,23 @@ This language is simple to read, haveing been built off of LISP's syntax, but al
 \section{lisp}
 \begin{paragraph}
   %\qquad
-  Lisp is a syntactically simple high level language. There are many dialects of LISP that have minor differences, for this section I will be referencing Scheme\cite{r7rs} for this section, but most of this information is broadly applicable. It is built off of the idea of S-expressions.\cite{OGLISPpaper} An S-expression is functionally similar to prefix notation (i.e. instead of writing $2+3*7-2$ we would write $(+\ 2\ (-\ (*\ 3\ 7\ )\ 2)\ )$). This means that most expressions in lisp take the form of $(function\ args*)$ , but there are exceptions like `let` and `lambda` expressions that have a bit more to there structure.
+  Lisp is a syntactically simple high level language. There are many dialects of LISP that have minor differences, for this section I will be referencing Scheme\cite{r7rs}, but most of this information is broadly applicable. It is built off of the idea of S-expressions.\cite{OGLISPpaper} An S-expression is functionally similar to prefix notation (i.e. instead of writing $2+3*7-2$ we would write $(+\ 2\ (-\ (*\ 3\ 7\ )\ 2)\ )$). This means that most expressions in lisp take the form of $(function\ args*)$ , but there are exceptions like `let` and `lambda` expressions that have a bit more to there structure.
 
-  What makes lisp special is that you write code the same way you write data, allowing you to use the same tools you use to manipulate data with functions to allow you to manipulate code with macros. This exact feature of LISP makes it easy to test most programming language ideas because instead of implementing an entirely new language to test a few features, you can instead write a few macros in lisp to test your ideas. It is also preferred because of its syntactic simplicity, as writing LISP is basically equivalent to writing an AST (Abstract syntax trees). % LISP code looks like an AST I don't know if that is convoyed like how I want
+  What makes LISP special is that you write code the same way you write data, allowing you to use the same tools you use to manipulate data with functions to allow you to manipulate code with macros. This exact feature of LISP makes it easy to test most programming language ideas because instead of implementing an entirely new language to test a few features, you can instead write a few macros in lisp to test your ideas. It is also preferred because of its syntactic simplicity, as writing LISP is basically equivalent to writing an AST (Abstract syntax trees). % LISP code looks like an AST I don't know if that is convoyed like how I want
 
 \end{paragraph}
 \subsection{history}
 \begin{paragraph}
   \qquad xxc
 \end{paragraph}
-\section{type theory}
 
-\chapter{Language Definitions}
+\chapter{Language Design}
 \begin{paragraph}
-  We used LISP like syntax to implement our language because of the simplicity involved. We do lack a few features, mostly steming from the limitations of haveing a type system, like quoting and macros. For the most part it is a LISP with the addition of types in square brackets.
-
-  For my implimentation I used a parseing combinator library called nom\cite{nom}. Parseing combenators \cite{Leijen2001ParsecDS} allow for easy parseing in-language, without a tools like lex and yacc\cite{lexandyacc}. parseing combenators in nom take the form of functions that take 1 argument, the text to be parsed), and return ether an error, or the parsed data and the rest of the text. Nom also gives you a variaty of ways to  combine these functions like many0 and many1 that act like + and * do in regular expressions.
+  We used LISP like syntax to design our language because of the simplicity involved. We do lack a few features, mostly steming from the limitations of haveing a type system, like quoting and macros. For the most part it is a LISP with the addition of types in square brackets.
 \end{paragraph}
 \section{Syntax}
 
+italisised things are productions
 \begin{longtable}{RLR}
       p\ ::= &e^+&\text{A program is one or more expressions}\\
       e\ ::= &(e\ e^*)&\text{an S-expression is an expression}\\
@@ -82,18 +88,226 @@ This language is simple to read, haveing been built off of LISP's syntax, but al
         a\ ::=&\text{an integer} | \text{A string surrounded by ``}\\
             |& unit &\text{Unit}\\
             |& \#'c & \text{where c is a character}\\
-            |& \#t\ |\#f & \text{True and False}\\
-         b\ ::= &v\ [t]?\ e & \text{A binding}\\
+            |& \#t\ |\#f & \text{True and False values}\\
+         b\ ::= &v\ \{[t]\}?\ e & \text{A binding}\\
          v\ ::= & ... &\text{A variable}\\
          t\ ::= & ... &\text{A type}
 \end{longtable}
-xvg
-\section{Semantics}
-\section{Formal Evaluation Judgements}
+\begin{lstlisting}[caption={An example program}]
+(define is-odd
+  (letrec (
+    (is-odd [-> Int Bool]
+      (lambda (x [INT])
+        (if (eq? x 0)
+        false
+        (is-even (- x 1)))))
+    (is-even [-> Int Bool]
+      (lambda (x [Int])
+        if (eq? x 0)
+        true
+        (is-odd (- x 1))))
+ ) is-odd )
+)
+
+(assert? (is-odd 1))
+(assert? (is-odd 3))
+(assert? (is-odd 1001))
+\end{lstlisting}
 \section{Formal Type Judgements}
-\section{Unification}
+
+
+
+
+\begin{mathpar}
+\inferrule* [Left=Foo]
+   {\inferrule* [Right=Bar,width=8em,
+                 leftskip=2em,rightskip=2em,vdots=1.5em]
+      {a \and a \and bb \hva\\ cc \and dd}
+      {ee}
+    \and ff \and gg}
+   {hh}
+\hva\and
+\inferrule* [lab=XX]{uu \and vv}{ww}
+\end{mathpar}
+
+
+
+$$
+ a \dot{=} b \text{ type $a$ is the same type as $b$.}
+ a \dot{\leq} b \text{ type $a$ is a subtype of type $b$.}
+ t:T \text{ term $t$ is of type $T$.}
+$$
+
+ 
+ \begin{mathpar}
+   \inferrule* [Left=Simple Fuction App]{
+     \Gamma \vdash f:(\rightarrow\ T_1\ T_2\ \cdots\ T_n\ T_R)\\
+     \Gamma \vdash a_i:A_i\\
+     \Gamma \vdash A_i\dot{\leq}T_i\\
+     \Gamma \vdash T_R\dot{\leq}T\\
+   }{
+     \Gamma\vdash (f\ a_1\ a_2\ \cdots\ a_n):T
+   }
+\end{mathpar}
+
+ \begin{mathpar}
+   \inferrule* [Left=Star Fuction App]{
+     \Gamma \vdash f:(\rightarrow\ T_1\ T_2\ \cdots\ T_n\ T_s^*\ T_R)\\
+     \Gamma \vdash a_i:A_i\\
+     \Gamma \vdash A_i\dot{\leq}T_i\\
+     \Gamma \vdash b_i:B_i\\
+     \Gamma \vdash B_i\dot{\leq}T_s\\
+     \Gamma \vdash T_R\dot{\leq}T\\
+   }{
+     \Gamma\vdash (f\ a_1\ a_2\ \cdots\ a_n\ b_1\ b_2\ \cdots\ b_k):T
+   }
+\end{mathpar}
+
+ \begin{mathpar}
+   \inferrule* [Left=Type of Variables]{
+     x:T\in \Gamma
+   }{
+     \Gamma \vdash x:T
+   }
+\end{mathpar}
+
+
+ \begin{mathpar}
+   \inferrule* [Left=Let Block]{
+     \Gamma\vdash a_i:A_i\\
+     \Gamma\vdash b_i:B_i\\
+     \Gamma\vdash B_i\dot{\leq}A_i\\
+     \Gamma\vdash T_R\dot{\leq}T\\
+     \Gamma\vdash [a_1\mapsto b_1]\cdots[a_n\mapsto b_n]x:T_R
+   }{
+     \Gamma\vdash 
+       (let (($a_1$ [$A_1$] $b_1$)\\
+       \vdots\\
+       ($a_n$ [$A_n$] $b_n$))\\
+       x):T
+   }
+\end{mathpar}
+
+
+ \begin{mathpar}
+   \inferrule* [Left=Int]{
+   }{
+     \Gamma \vdash 0,1,2,\cdots:\text{Int}
+   }
+\end{mathpar}
+
+  \begin{mathpar}
+   \inferrule* [Left=Unit]{
+   }{
+     \Gamma \vdash \text{unit}:\text{Unit}
+   }
+\end{mathpar}
+
+
+  \begin{mathpar}
+   \inferrule* [Left=Str]{
+   }{
+     \Gamma \vdash \text{"\cdots"}:\text{Str}
+   }
+\end{mathpar}
+ 
+
+  \begin{mathpar}
+   \inferrule* [Left=Char]{
+   }{
+     \Gamma \vdash \text{#'a, #'b, \cdots, #'z, #'A, #'B, \cdots, #'Z}:\text{Char}
+   }
+\end{mathpar}
+
+  \begin{mathpar}
+   \inferrule* [Left=List]{
+     \Gamma\vdash a_i:A_i\\
+     \Gamma\vdash A_i:T\\
+   }{
+     \Gamma\vdash [a_1\ a_2\ \cdots\ a_n]:(\text{List} T)
+   }
+\end{mathpar}
+
+
+  \begin{mathpar}
+   \inferrule* [Left=Pair]{
+     \Gamma\vdash a:A\\
+     \Gamma\vdash b:B\\
+   }{
+     \Gamma\vdash (\text{cons}\ a\ b):(\text{Pair}\ A\ B)
+   }
+\end{mathpar}
+
+  \begin{mathpar}
+   \inferrule* [Left=Let Rec Block]{
+     \Gamma\vdash [a_1\mapsto b_1]\cdots [a_n\mapsto b_n]b_i:B_i\\
+     \Gamma\vdash a_i:(\rightarrow\ A_{i,1}\ A_{i,2}\ \cdots\ A_{i,k})\\
+     \Gamma\vdash B_i\dot{\leq}(\rightarrow\ A_{i,1}\ A_{i,2}\ \cdots\ A_{i,k})\\
+     \Gamma\vdash T_R\dot{\leq}T\\
+     \Gamma\vdash [a_1\mapsto b_1] [a_2\mapsto b_2] \cdots[a_n\mapsto b_n]x:T_R\\
+   }{
+     \Gamma\vdash (\text{letrec} ((a_1\ [(\rightarrow\ A_{1,1}\ A_{1,2}\ \cdots\ A_{1,k})]\ b_1)
+     \cdots (a_n\ [(\rightarrow\ A_{n,1}\ A_{n,2}\ \cdots\ A_{n,k})]\ b_n))
+     x):T
+   }
+\end{mathpar}
+
+
+
+  \begin{mathpar}
+   \inferrule* [Left=Enum (without type vars)]{
+   }{
+     \Gamma\vdash (\text{enum}\ E\ ((E_1\ [T_1])\vdots(E_n\ [T_n])(E_{n+1})\vdots (E_{n+k}))):Unit,
+     \Gamma\vdash E_1:(\rightarrow\ T_1\ E),\vdots
+     \Gamma\vdash E_n:(\rightarrow\ T_n\ E),
+     \Gamma\vdash E_{n+1}:(\rightarrow\ E),\vdots
+     \Gamma\vdash E_{n+k}:(\rightarrow\ E),
+   }
+\end{mathpar}
+
+
+  \begin{mathpar}
+   \inferrule* [Left=Enum (with type vars)]{
+     B_1,B_2,\cdots,B_n\in\Gamma
+   }{
+     \Gamma\vdash (\text{enum}\ E\ [A_1\ A_2\ \cdots\ A_n] ((E_1\ [T_1])\cdots(E_j\ [T_n])(E_{j+1})\cdots(E_{j+k}))):\text{Unit},
+     \Gamma\vdash [A_1\mapsto B_1]\cdots[A_n\mapsto B_n] E_1:(\rightarrow\ T_1\ (E\ B_1\ B_2\ \cdots\ B_n)),
+     \vdots
+     \Gamma\vdash [A_1\mapsto B_1]\cdots[A_n\mapsto B_n] E_j:(\rightarrow\ T_j\ (E\ B_1\ B_2\ \cdots\ B_n)),
+     \Gamma\vdash [A_1\mapsto B_1]\cdots[A_n\mapsto B_n] E_{j+1}:(\rightarrow\ (E\ B_1\ B_2\ \cdots\ B_n)),
+     \vdots
+     \Gamma\vdash [A_1\mapsto B_1]\cdots[A_n\mapsto B_n] E_{j+k}:(\rightarrow\ (E\ B_1\ B_2\ \cdots\ B_n))
+   }
+\end{mathpar}
+
+\section{Formal Evaluation Judgements}
+
+\chapter{Implementation}
+\section{Parseing}
+\begin{paragraph}
+  \cite{nom}. Parseing combenators \cite{Leijen2001ParsecDS} allow for easy parseing in-language, without a tools like lex and yacc\cite{lexandyacc}. parseing combenators in nom take the form of functions that take 1 argument, the text to be parsed), and return ether an error, or the parsed data and the rest of the text. Nom also gives you a variaty of ways to  combine these functions like many0 and many1 that act like + and * do in regular expressions.
+\end{paragraph}
+\section{Type Checking}
+
+
+
+ 
+\subsection{Unification}
 my implementation of unifications comes from \cite{Norvig1991CorrectingAW} and \cite{inproceedings}.
 
+
+\section{Evaluation}
+
+
+\section{Example programs}
+\subsection{standard library}
+xx
+
+\chapter{Related Work}
+xx
+
+breif descriptions 
+coq, idris1/2, and agda
 
 \chapter{Future Work}
 allow values in the type system for a full dependently typed language

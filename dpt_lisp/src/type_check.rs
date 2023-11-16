@@ -420,8 +420,8 @@ pub fn type_check(
         type_check(ast, &mut new_context, problem_set)
       })
     }
-    AST::Enum(name, bindings, loc) => {
-      add_enum_funcs_to_context(&name, &bindings, &vec![], &loc, context, problem_set)?;
+    AST::Enum(name, type_vars,bindings,  loc) => {
+      add_enum_funcs_to_context(&name, &bindings, &type_vars, &loc, context, problem_set)?;
       Ok(TypeBinding::Unit)
     }
     AST::Match(ref mut argument, ref mut conditions, loc) => {
